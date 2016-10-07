@@ -2,7 +2,7 @@ import simpy
 import random
 import functools
 
-SIM_DURATION = 1
+SIM_DURATION = 0.9
 RANDOM_SEED = 42
 
 
@@ -39,12 +39,13 @@ def sender(env, cable, ONU):
         sdist = functools.partial(random.expovariate, 0.01)  # mean size 100 bytes
         samp_dist = functools.partial(random.expovariate, 1.0)
         port_rate = 1000.0
-        ps = PacketSink(env, debug=False, rec_arrivals=True)
+        #ps = PacketSink(env, debug=False, rec_arrivals=True)
         pg = PacketGenerator(env, "Greg", adist, sdist)
-        switch_port = SwitchPort(env, port_rate, qlimit=10000)
-        pg.out = switch_port
-        switch_port.out = ps
-        #print("ONU queue is %s" % ONU.queue.items)
+        port = SwitchPort(env, port_rate, qlimit=10000)
+        pg.out = port
+        #port.out = ps
+        q_size =port.byte_size
+        print("ONU %s queue is %s" % (ONU.oid,q_size))
         cable.put(('ONU %s sent this at %.6f' % (ONU.oid, env.now)),ONU.delay)
 
 
@@ -94,6 +95,7 @@ class PacketGenerator(object):
             # wait for next transmission
             yield self.env.timeout(self.adist())
             self.packets_sent += 1
+            print("pkt sent")
             p = Packet(self.env.now, self.sdist(), self.packets_sent, src=self.id, flow_id=self.flow_id)
             self.out.put(p)
 
@@ -146,18 +148,23 @@ class SwitchPort(object):
         self.packets_rec = 0
         self.packets_drop = 0
         self.qlimit = qlimit
-        self.byte_size = 0  # Current size of the queue in bytes
+        self.byte_size = 10  # Current size of the queue in bytes
         self.debug = debug
         self.busy = 0  # Used to track if a packet is currently being sent
         self.action = env.process(self.run())  # starts the run() method as a SimPy process
 
     def run(self):
         while True:
+            print(self.store.items)
+            print("tamanho da filax %.6f " % self.byte_size)
+            #yield self.env.timeout(2)
             msg = (yield self.store.get())
+            print("envie %s" % msg)
             self.busy = 1
             self.byte_size -= msg.size
+            print("tamanho da filas %.6f " % self.byte_size)
             yield self.env.timeout(msg.size*8.0/self.rate)
-            self.out.put(msg)
+            #self.out.put(msg)
             self.busy = 0
             if self.debug:
                 print msg
@@ -165,16 +172,22 @@ class SwitchPort(object):
     def put(self, pkt):
         self.packets_rec += 1
         tmp = self.byte_size + pkt.size
+        print("tmp1 = %f" % tmp)
 
         if self.qlimit is None:
             self.byte_size = tmp
             return self.store.put(pkt)
+        print("tmp2 = %f" % tmp)
         if tmp >= self.qlimit:
             self.packets_drop += 1
             return
         else:
+            print("Im put %s in the queue" % pkt)
+            print("tmp3 = %f" % tmp)
             self.byte_size = tmp
-            return self.store.put(pkt)
+            print("tamanho da fila %.6f " % self.byte_size)
+            self.store.put(pkt)
+            #return self.store.put(pkt)
 
 class ONU(object):
     def __init__(self,distance,oid,env):
