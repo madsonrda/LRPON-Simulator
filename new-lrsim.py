@@ -1,9 +1,11 @@
 import simpy
 import random
 import functools
+import time
 
-SIM_DURATION = 0.9
+SIM_DURATION = 0.05
 RANDOM_SEED = 42
+REQUEST = []
 
 
 class Cable(object):
@@ -25,7 +27,12 @@ class Cable(object):
 
 #yield store.put('spam %s' % i)
 #print('Produced spam at', env.now)
-def sender(env, cable, ONU):
+def DBA_IPACT(RTT,buffer):
+    sending_time = buffer*8/1000.0
+    grant_time = RTT + sending_time + 0.0001
+    return grant_time
+
+def ONU_sender(env, cable, ONU):
     """A process which randomly generates messages."""
     while True:
         #pkt_size = random.randint(5,20)
@@ -35,27 +42,30 @@ def sender(env, cable, ONU):
 
         # wait for next transmission
         yield env.timeout(0.0001)
-        adist = functools.partial(random.expovariate, 0.5)
-        sdist = functools.partial(random.expovariate, 0.01)  # mean size 100 bytes
-        samp_dist = functools.partial(random.expovariate, 1.0)
-        port_rate = 1000.0
-        #ps = PacketSink(env, debug=False, rec_arrivals=True)
-        pg = PacketGenerator(env, "Greg", adist, sdist)
-        port = SwitchPort(env, port_rate, qlimit=10000)
-        pg.out = port
+
         #port.out = ps
-        q_size =port.byte_size
+        q_size =ONU.port.byte_size
         print("ONU %s queue is %s" % (ONU.oid,q_size))
-        cable.put(('ONU %s sent this at %.6f' % (ONU.oid, env.now)),ONU.delay)
+        #print(ONU.port.store.items)
+        msg = {'text':"ONU %s sent this REQUEST for %.6f at %.6f" %
+            (ONU.oid,ONU.port.byte_size, env.now),'queue_size':q_size,'ONU':ONU}
+        cable.put((msg),ONU.delay)
+        ONU.port.set_grant(q_size)
+        sent = env.process(ONU.port.sent())
+        yield sent
 
 
-def receiver(env, cable):
+def OLT_receiver(env, cable,olt):
     """A process which consumes messages."""
     while True:
         # Get event for message pipe
         #pkt_size = random.randint(5,20)
         msg = yield cable.get()
-        print('Received this at %.6f while %s' % (env.now, msg))
+        print('OLT Received this at %.6f while %s' % (env.now, msg['text']))
+        REQUEST.append((msg['ONU'].oid,msg['queue_size'],env.now))
+        print msg['ONU'].delay
+        dba = olt.DBA_IPACT(msg['ONU'].delay,msg['queue_size'])
+        yield env.timeout(dba)
 
 
         #self.queue = simpy.Store(self.env, capacity=20)
@@ -87,15 +97,16 @@ class PacketGenerator(object):
         self.action = env.process(self.run())  # starts the run() method as a SimPy process
         self.flow_id = flow_id
 
+
     def run(self):
         """The generator function used in simulations.
         """
+
         yield self.env.timeout(self.initial_delay)
         while self.env.now < self.finish:
             # wait for next transmission
             yield self.env.timeout(self.adist())
             self.packets_sent += 1
-            print("pkt sent")
             p = Packet(self.env.now, self.sdist(), self.packets_sent, src=self.id, flow_id=self.flow_id)
             self.out.put(p)
 
@@ -142,50 +153,59 @@ class SwitchPort(object):
 
     def __init__(self, env, rate, qlimit=None, debug=False):
         self.store = simpy.Store(env)
+        self.res = simpy.Resource(env, capacity=1)
+        self.grant_size = 0
         self.rate = rate
         self.env = env
         self.out = None
         self.packets_rec = 0
         self.packets_drop = 0
         self.qlimit = qlimit
-        self.byte_size = 10  # Current size of the queue in bytes
+        self.byte_size = 0  # Current size of the queue in bytes
         self.debug = debug
         self.busy = 0  # Used to track if a packet is currently being sent
         self.action = env.process(self.run())  # starts the run() method as a SimPy process
 
-    def run(self):
-        while True:
-            print(self.store.items)
-            print("tamanho da filax %.6f " % self.byte_size)
-            #yield self.env.timeout(2)
+    def set_grant(self,grant_size):
+        self.grant_size = grant_size
+
+    def sent(self):
+        while self.grant_size > 0:
             msg = (yield self.store.get())
-            print("envie %s" % msg)
             self.busy = 1
             self.byte_size -= msg.size
-            print("tamanho da filas %.6f " % self.byte_size)
+            self.grant_size -= msg.size
+            print "ENVIANDO"
             yield self.env.timeout(msg.size*8.0/self.rate)
-            #self.out.put(msg)
-            self.busy = 0
-            if self.debug:
-                print msg
+
+
+    def run(self):
+        while True:
+            with self.res.request() as req:
+                yield req
+                yield self.env.timeout(0.2)
+                # msg = (yield self.store.get())
+                # self.busy = 1
+                # self.byte_size -= msg.size
+                # self.grant_size -= msg.size
+                # yield self.env.timeout(msg.size*8.0/self.rate)
+                # #self.out.put(msg)
+                # self.busy = 0
+                # if self.debug:
+                #     print msg
 
     def put(self, pkt):
         self.packets_rec += 1
         tmp = self.byte_size + pkt.size
-        print("tmp1 = %f" % tmp)
 
         if self.qlimit is None:
             self.byte_size = tmp
             return self.store.put(pkt)
-        print("tmp2 = %f" % tmp)
         if tmp >= self.qlimit:
             self.packets_drop += 1
             return
         else:
-            print("Im put %s in the queue" % pkt)
-            print("tmp3 = %f" % tmp)
             self.byte_size = tmp
-            print("tamanho da fila %.6f " % self.byte_size)
             self.store.put(pkt)
             #return self.store.put(pkt)
 
@@ -196,7 +216,26 @@ class ONU(object):
         self.oid = oid
         self.delay = self.distance/ float(210000)
         self.thread_delay = 0
-        self.queue = simpy.Store(self.env, capacity=20)
+        #self.queue = simpy.Store(self.env, capacity=20)
+        adist = functools.partial(random.expovariate, 50)
+        sdist = functools.partial(random.expovariate, 0.01)  # mean size 100 bytes
+        samp_dist = functools.partial(random.expovariate, 1.0)
+        port_rate = 1000.0
+        #ps = PacketSink(env, debug=False, rec_arrivals=True)
+        self.pg = PacketGenerator(self.env, "Greg", adist, sdist)
+        self.port = SwitchPort(self.env, port_rate, qlimit=10000)
+        self.pg.out = self.port
+
+class OLT(object):
+    def __init__(self,env):
+        self.env = env
+        self.guard_int = 0.0001
+
+    def DBA_IPACT(self,RTT,buffer):
+        sending_time = buffer*8/1000.0
+        grant_time = RTT + sending_time + self.guard_int
+        return grant_time
+
 
 # Setup and start the simulation
 print('Event Latency')
@@ -207,8 +246,10 @@ env = simpy.Environment()
 cable = Cable(env, 10)
 onu0 = ONU(20,0,env)
 onu1 = ONU(100,1,env)
-env.process(sender(env, cable, onu0))
-env.process(sender(env, cable, onu1))
-env.process(receiver(env, cable))
+olt = OLT(env)
+env.process(ONU_sender(env, cable, onu0))
+env.process(ONU_sender(env, cable, onu1))
+env.process(OLT_receiver(env, cable,olt))
 
 env.run(until=SIM_DURATION)
+print REQUEST[-6:]
