@@ -6,6 +6,7 @@ import time
 SIM_DURATION = 0.05
 RANDOM_SEED = 42
 REQUEST = []
+NUMBER_OF_ONUs = 3
 
 
 class Cable(object):
@@ -13,17 +14,17 @@ class Cable(object):
     def __init__(self, env, delay):
         self.env = env
         #self.delay = delay
-        self.store = simpy.Store(env)
+        self.upstream = simpy.Store(env)
 
     def latency(self, value,delay):
         yield self.env.timeout(delay)
-        self.store.put(value)
+        self.upstream.put(value)
 
     def put(self, value,delay):
         self.env.process(self.latency(value,delay))
 
     def get(self):
-        return self.store.get()
+        return self.upstream.get()
 
 #yield store.put('spam %s' % i)
 #print('Produced spam at', env.now)
@@ -32,40 +33,40 @@ def DBA_IPACT(RTT,buffer):
     grant_time = RTT + sending_time + 0.0001
     return grant_time
 
-def ONU_sender(env, cable, ONU):
-    """A process which randomly generates messages."""
-    while True:
-        #pkt_size = random.randint(5,20)
-        #yield ONU.queue.put('pkt_size %s' % pkt_size)
-        #print('pkt queued at %.6f' % env.now)
+# def ONU_sender(env, cable, ONU):
+#     """A process which randomly generates messages."""
+#     while True:
+#         #pkt_size = random.randint(5,20)
+#         #yield ONU.queue.put('pkt_size %s' % pkt_size)
+#         #print('pkt queued at %.6f' % env.now)
+#
+#
+#         # wait for next transmission
+#         yield env.timeout(0.0001)
+#
+#         #port.out = ps
+#         q_size =ONU.port.byte_size
+#         print("ONU %s queue is %s" % (ONU.oid,q_size))
+#         #print(ONU.port.store.items)
+#         msg = {'text':"ONU %s sent this REQUEST for %.6f at %.6f" %
+#             (ONU.oid,ONU.port.byte_size, env.now),'queue_size':q_size,'ONU':ONU}
+#         cable.put((msg),ONU.delay)
+#         ONU.port.set_grant(q_size)
+#         sent = env.process(ONU.port.sent())
+#         yield sent
 
 
-        # wait for next transmission
-        yield env.timeout(0.0001)
-
-        #port.out = ps
-        q_size =ONU.port.byte_size
-        print("ONU %s queue is %s" % (ONU.oid,q_size))
-        #print(ONU.port.store.items)
-        msg = {'text':"ONU %s sent this REQUEST for %.6f at %.6f" %
-            (ONU.oid,ONU.port.byte_size, env.now),'queue_size':q_size,'ONU':ONU}
-        cable.put((msg),ONU.delay)
-        ONU.port.set_grant(q_size)
-        sent = env.process(ONU.port.sent())
-        yield sent
-
-
-def OLT_receiver(env, cable,olt):
-    """A process which consumes messages."""
-    while True:
-        # Get event for message pipe
-        #pkt_size = random.randint(5,20)
-        msg = yield cable.get()
-        print('OLT Received this at %.6f while %s' % (env.now, msg['text']))
-        REQUEST.append((msg['ONU'].oid,msg['queue_size'],env.now))
-        print msg['ONU'].delay
-        dba = olt.DBA_IPACT(msg['ONU'].delay,msg['queue_size'])
-        yield env.timeout(dba)
+# def OLT_receiver(env, cable,olt):
+#     """A process which consumes messages."""
+#     while True:
+#         # Get event for message pipe
+#         #pkt_size = random.randint(5,20)
+#         msg = yield cable.get()
+#         print('OLT Received this at %.6f while %s' % (env.now, msg['text']))
+#         REQUEST.append((msg['ONU'].oid,msg['queue_size'],env.now))
+#         print msg['ONU'].delay
+#         dba = olt.DBA_IPACT(msg['ONU'].delay,msg['queue_size'])
+#         yield env.timeout(dba)
 
 
         #self.queue = simpy.Store(self.env, capacity=20)
@@ -210,7 +211,7 @@ class SwitchPort(object):
             #return self.store.put(pkt)
 
 class ONU(object):
-    def __init__(self,distance,oid,env):
+    def __init__(self,distance,oid,env,cable):
         self.env = env
         self.distance = distance
         self.oid = oid
@@ -225,16 +226,52 @@ class ONU(object):
         self.pg = PacketGenerator(self.env, "Greg", adist, sdist)
         self.port = SwitchPort(self.env, port_rate, qlimit=10000)
         self.pg.out = self.port
+        self.sender = self.env.process(self.ONU_sender(cable))
+
+    def ONU_sender(self, cable):
+        """A process which randomly generates messages."""
+        while True:
+            #pkt_size = random.randint(5,20)
+            #yield ONU.queue.put('pkt_size %s' % pkt_size)
+            #print('pkt queued at %.6f' % env.now)
+
+
+            # wait for next transmission
+            yield self.env.timeout(0.0001)
+
+            #port.out = ps
+            q_size =self.port.byte_size
+            print("ONU %s queue is %s" % (self.oid,q_size))
+            #print(ONU.port.store.items)
+            msg = {'text':"ONU %s sent this REQUEST for %.6f at %.6f" %
+                (self.oid,self.port.byte_size, self.env.now),'queue_size':q_size,'ONU':self}
+            cable.put((msg),self.delay)
+            self.port.set_grant(q_size)
+            sent = self.env.process(self.port.sent())
+            yield sent
 
 class OLT(object):
-    def __init__(self,env):
+    def __init__(self,env,cable):
         self.env = env
         self.guard_int = 0.0001
+        self.receiver = self.env.process(self.OLT_receiver(cable))
 
     def DBA_IPACT(self,RTT,buffer):
         sending_time = buffer*8/1000.0
         grant_time = RTT + sending_time + self.guard_int
         return grant_time
+
+    def OLT_receiver(self,cable):
+        """A process which consumes messages."""
+        while True:
+            # Get event for message pipe
+            #pkt_size = random.randint(5,20)
+            msg = yield cable.get()
+            print('OLT Received this at %.6f while %s' % (self.env.now, msg['text']))
+            REQUEST.append((msg['ONU'].oid,msg['queue_size'],self.env.now))
+            print msg['ONU'].delay
+            dba = self.DBA_IPACT(msg['ONU'].delay,msg['queue_size'])
+            yield self.env.timeout(dba)
 
 
 # Setup and start the simulation
@@ -244,12 +281,15 @@ env = simpy.Environment()
 
 
 cable = Cable(env, 10)
-onu0 = ONU(20,0,env)
-onu1 = ONU(100,1,env)
-olt = OLT(env)
-env.process(ONU_sender(env, cable, onu0))
-env.process(ONU_sender(env, cable, onu1))
-env.process(OLT_receiver(env, cable,olt))
+ONU_List = []
+for i in range(NUMBER_OF_ONUs):
+    ONU_List.append(ONU(100,i,env,cable))
+#onu0 = ONU(20,0,env)
+#onu1 = ONU(100,1,env,cab)
+olt = OLT(env,cable)
+#env.process(ONU_sender(env, cable, onu0))
+#env.process(ONU_sender(env, cable, onu1))
+#env.process(OLT_receiver(env, cable,olt))
 
 env.run(until=SIM_DURATION)
 print REQUEST[-6:]
