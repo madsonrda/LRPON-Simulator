@@ -3,7 +3,7 @@ import random
 import functools
 import time
 
-SIM_DURATION = 0.05
+SIM_DURATION = 10
 RANDOM_SEED = 42
 REQUEST = []
 NUMBER_OF_ONUs = 3
@@ -13,63 +13,31 @@ class Cable(object):
     """This class represents the propagation through a cable."""
     def __init__(self, env, delay):
         self.env = env
-        #self.delay = delay
         self.upstream = simpy.Store(env)
+        self.downstream = []
+        for i in range(NUMBER_OF_ONUs):
+            self.downstream.append(simpy.Store(env))
 
-    def latency(self, value,delay):
+    def up_latency(self, value,delay):
         yield self.env.timeout(delay)
         self.upstream.put(value)
 
+    def down_latency(self,ONU,value):
+        yield self.env.timeout(ONU.delay)
+        self.downstream[ONU.oid].put(value)
+
+
     def put(self, value,delay):
-        self.env.process(self.latency(value,delay))
+        self.env.process(self.up_latency(value,delay))
 
     def get(self):
         return self.upstream.get()
 
-#yield store.put('spam %s' % i)
-#print('Produced spam at', env.now)
-def DBA_IPACT(RTT,buffer):
-    sending_time = buffer*8/1000.0
-    grant_time = RTT + sending_time + 0.0001
-    return grant_time
+    def put_grant(self,ONU,value):
+        self.env.process(self.down_latency(ONU,value))
 
-# def ONU_sender(env, cable, ONU):
-#     """A process which randomly generates messages."""
-#     while True:
-#         #pkt_size = random.randint(5,20)
-#         #yield ONU.queue.put('pkt_size %s' % pkt_size)
-#         #print('pkt queued at %.6f' % env.now)
-#
-#
-#         # wait for next transmission
-#         yield env.timeout(0.0001)
-#
-#         #port.out = ps
-#         q_size =ONU.port.byte_size
-#         print("ONU %s queue is %s" % (ONU.oid,q_size))
-#         #print(ONU.port.store.items)
-#         msg = {'text':"ONU %s sent this REQUEST for %.6f at %.6f" %
-#             (ONU.oid,ONU.port.byte_size, env.now),'queue_size':q_size,'ONU':ONU}
-#         cable.put((msg),ONU.delay)
-#         ONU.port.set_grant(q_size)
-#         sent = env.process(ONU.port.sent())
-#         yield sent
-
-
-# def OLT_receiver(env, cable,olt):
-#     """A process which consumes messages."""
-#     while True:
-#         # Get event for message pipe
-#         #pkt_size = random.randint(5,20)
-#         msg = yield cable.get()
-#         print('OLT Received this at %.6f while %s' % (env.now, msg['text']))
-#         REQUEST.append((msg['ONU'].oid,msg['queue_size'],env.now))
-#         print msg['ONU'].delay
-#         dba = olt.DBA_IPACT(msg['ONU'].delay,msg['queue_size'])
-#         yield env.timeout(dba)
-
-
-        #self.queue = simpy.Store(self.env, capacity=20)
+    def get_grant(self,ONU_id):
+        return self.downstream[ONU_id].get()
 
 class Packet(object):
 
@@ -176,15 +144,15 @@ class SwitchPort(object):
             self.busy = 1
             self.byte_size -= msg.size
             self.grant_size -= msg.size
-            print "ENVIANDO"
-            yield self.env.timeout(msg.size*8.0/self.rate)
+            bits = msg.size * 8000
+            sending_time = 	bits/float(1000000000)
+            yield self.env.timeout(sending_time)
+            print("paket delay is %.6f" % (self.env.now - msg.time))
 
 
     def run(self):
         while True:
-            with self.res.request() as req:
-                yield req
-                yield self.env.timeout(0.2)
+            yield self.env.timeout(5)
                 # msg = (yield self.store.get())
                 # self.busy = 1
                 # self.byte_size -= msg.size
@@ -237,29 +205,38 @@ class ONU(object):
 
 
             # wait for next transmission
-            yield self.env.timeout(0.0001)
+            #yield self.env.timeout(0.0001)
 
             #port.out = ps
-            q_size =self.port.byte_size
-            print("ONU %s queue is %s" % (self.oid,q_size))
-            #print(ONU.port.store.items)
-            msg = {'text':"ONU %s sent this REQUEST for %.6f at %.6f" %
-                (self.oid,self.port.byte_size, self.env.now),'queue_size':q_size,'ONU':self}
+            b_size =self.port.byte_size
+            msg = {'text':"ONU %s sent this REQUEST for %.6f at %f" %
+                (self.oid,self.port.byte_size, self.env.now),'buffer_size':b_size,'ONU':self}
             cable.put((msg),self.delay)
-            self.port.set_grant(q_size)
-            sent = self.env.process(self.port.sent())
-            yield sent
+            grant = yield cable.get_grant(self.oid)
+            self.port.set_grant(grant['grant_size'])
+            sent_pkt = self.env.process(self.port.sent())
+            yield sent_pkt
 
 class OLT(object):
     def __init__(self,env,cable):
         self.env = env
-        self.guard_int = 0.0001
+        self.guard_int = 0.000001
+        self.counter = simpy.Resource(self.env, capacity=1)
         self.receiver = self.env.process(self.OLT_receiver(cable))
 
-    def DBA_IPACT(self,RTT,buffer):
-        sending_time = buffer*8/1000.0
-        grant_time = RTT + sending_time + self.guard_int
-        return grant_time
+    def DBA_IPACT(self,ONU,b_size,cable):
+        with self.counter.request() as my_turn:
+            yield my_turn
+            delay = ONU.delay
+            bits = b_size * 8000
+            sending_time = 	bits/float(1000000000)
+            grant_time = delay + sending_time + self.guard_int
+            print("ONU %s: grant time for %s is %f" % (ONU.oid,b_size,grant_time))
+            #enviar pelo cabo o buffer para a onu
+            msg = {'grant_size': b_size}
+            cable.put_grant(ONU,msg)
+            yield self.env.timeout(grant_time)
+            #return grant_time
 
     def OLT_receiver(self,cable):
         """A process which consumes messages."""
@@ -267,11 +244,11 @@ class OLT(object):
             # Get event for message pipe
             #pkt_size = random.randint(5,20)
             msg = yield cable.get()
-            print('OLT Received this at %.6f while %s' % (self.env.now, msg['text']))
-            REQUEST.append((msg['ONU'].oid,msg['queue_size'],self.env.now))
-            print msg['ONU'].delay
-            dba = self.DBA_IPACT(msg['ONU'].delay,msg['queue_size'])
-            yield self.env.timeout(dba)
+            print('OLT Received this at %f while %s' % (self.env.now, msg['text']))
+            REQUEST.append((msg['ONU'].oid,msg['buffer_size'],self.env.now))
+            self.env.process(self.DBA_IPACT(msg['ONU'],msg['buffer_size'],cable))
+            #dba = self.DBA_IPACT(msg['ONU'].delay,msg['queue_size'])
+            #yield self.env.timeout(dba)
 
 
 # Setup and start the simulation
@@ -283,13 +260,9 @@ env = simpy.Environment()
 cable = Cable(env, 10)
 ONU_List = []
 for i in range(NUMBER_OF_ONUs):
-    ONU_List.append(ONU(100,i,env,cable))
-#onu0 = ONU(20,0,env)
-#onu1 = ONU(100,1,env,cab)
-olt = OLT(env,cable)
-#env.process(ONU_sender(env, cable, onu0))
-#env.process(ONU_sender(env, cable, onu1))
-#env.process(OLT_receiver(env, cable,olt))
+    distance = random.randint(20,100)
+    ONU_List.append(ONU(distance,i,env,cable))
 
+olt = OLT(env,cable)
 env.run(until=SIM_DURATION)
 print REQUEST[-6:]
