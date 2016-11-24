@@ -113,13 +113,20 @@ class SwitchPort(object):
 
     def sent(self,ONU_id):
         #print("ONU %s: buffer-req %s, grant %s, current_buffer %s" % (ONU_id,self.last_byte_size,self.grant_size,self.byte_size))
+        grant_final_time = env.now + (self.grant_size * 8)/float(1000000000)
         while self.grant_size > 0:
             msg = (yield self.store.get())
             self.busy = 1
+            if (self.grant_size - msg.size) < -1:
+                self.store.put(msg)
+                break
             self.byte_size -= msg.size
             self.grant_size -= msg.size
             bits = msg.size * 8
             sending_time = 	bits/float(1000000000)
+            if env.now + sending_time > grant_final_time:
+                self.store.put(msg)
+                break
             yield self.env.timeout(sending_time)
             #print("paket delay is %.6f" % (self.env.now - msg.time))
             Delay.append(self.env.now - msg.time)
@@ -159,6 +166,8 @@ class ONU(object):
         self.oid = oid
         self.delay = self.distance/ float(210000)
         self.thread_delay = 0
+        self.last_req = 0
+        self.excess = 0
         adist = functools.partial(random.expovariate, 50)
         sdist = functools.partial(random.expovariate, 0.01)  # mean size 100 bytes
         samp_dist = functools.partial(random.expovariate, 1.0)
@@ -172,14 +181,19 @@ class ONU(object):
         """A process which randomly generates messages."""
         while True:
 
-            b_size =self.port.byte_size
-            if b_size > 0:
-                self.port.set_last_b_size(b_size)
+            #b_size =self.port.byte_size
+            if self.port.byte_size > 0:
+                self.last_req = self.port.byte_size
+                self.port.set_last_b_size(self.port.byte_size)
                 msg = {'text':"ONU %s sent this REQUEST for %.6f at %f" %
-                    (self.oid,self.port.byte_size, self.env.now),'buffer_size':b_size,'ONU':self}
+                    (self.oid,self.port.byte_size, self.env.now),'buffer_size':self.port.byte_size,'ONU':self}
                 cable.put((msg),self.delay)
+
+                #ONU_receiver(mover e criar novo processo)
+
                 grant = yield cable.get_grant(self.oid)
-                b_size =self.port.byte_size
+                self.excess = self.last_req - grant['grant_size']
+                #b_size =self.port.byte_size
                 #self.newly_arrived.append(b_size - self.last_req)
                 self.port.set_grant(grant['grant_size'])
                 sent_pkt = self.env.process(self.port.sent(self.oid))
