@@ -4,7 +4,7 @@ import functools
 import time
 import numpy
 
-SIM_DURATION = 30
+SIM_DURATION = 60
 RANDOM_SEED = 30
 REQUEST = []
 NUMBER_OF_ONUs = 3
@@ -94,6 +94,7 @@ class SwitchPort(object):
         self.store = simpy.Store(env)
         self.res = simpy.Resource(env, capacity=1)
         self.grant_size = 0
+        self.guard_int = 0.000001
         self.rate = rate
         self.env = env
         self.out = None
@@ -105,31 +106,66 @@ class SwitchPort(object):
         self.debug = debug
         self.busy = 0  # Used to track if a packet is currently being sent
         self.action = env.process(self.run())  # starts the run() method as a SimPy process
+        self.msg = None
 
     def set_grant(self,grant_size):
         self.grant_size = grant_size
     def set_last_b_size(self,last_b_size):
         self.last_byte_size = last_b_size
 
+    def get_msg(self):
+        msg = (yield self.store.get() )
+        #print("Momento em que ha pacotes a serem enviados  %s" % self.env.now)
+        self.msg = msg
+
     def sent(self,ONU_id):
         #print("ONU %s: buffer-req %s, grant %s, current_buffer %s" % (ONU_id,self.last_byte_size,self.grant_size,self.byte_size))
+        #print("Momento em que esta liberado para enviar os pacotes %s" % self.env.now)
+        #print self.env.now
+        #print (self.grant_size * 8)/float(1000000000)
         grant_final_time = env.now + (self.grant_size * 8)/float(1000000000)
+        #print ("tempo limite do grant %s" % (grant_final_time))
         while self.grant_size > 0:
-            msg = (yield self.store.get())
+            #print ("grant_size = %s" % (self.grant_size))
+            #print self.env.now
+            #msg = (yield self.store.get() | self.env.timeout(grant_final_time - self.env.now)).values()
+            get_msg = self.env.process(self.get_msg())
+            grant_timeout = self.env.timeout(grant_final_time - self.env.now)
+            #print self.env.now
+            yield get_msg | grant_timeout
+            #print self.env.now
+            #print grant_final_time
+            if (grant_final_time < env.now):
+                #print "acabou tempo da grant"
+                break
+            if self.msg is not None:
+                msg = self.msg
+            else:
+                #print "msg None"
+                break
             self.busy = 1
             if (self.grant_size - msg.size) < -1:
                 self.store.put(msg)
+                #print "nao enviei (pouco grant)"
                 break
+            #print ("msg_size = %s" % (msg.size))
             self.byte_size -= msg.size
             self.grant_size -= msg.size
             bits = msg.size * 8
             sending_time = 	bits/float(1000000000)
-            if env.now + sending_time > grant_final_time:
+            #Prara evitar fragmentacao se passar o a janela do grant
+            if env.now + sending_time > grant_final_time + self.guard_int:
+                self.byte_size += msg.size
+                self.grant_size += msg.size
                 self.store.put(msg)
+                #print env.now + sending_time
+                #print "nao enviei (pouco tempo)"
                 break
             yield self.env.timeout(sending_time)
             #print("paket delay is %.6f" % (self.env.now - msg.time))
             Delay.append(self.env.now - msg.time)
+            #print "ENVIEI"
+            self.msg = None
 
 
     def run(self):
@@ -153,6 +189,7 @@ class SwitchPort(object):
             self.byte_size = tmp
             return self.store.put(pkt)
         if tmp >= self.qlimit:
+            print "drop"
             self.packets_drop += 1
             return
         else:
@@ -168,12 +205,12 @@ class ONU(object):
         self.thread_delay = 0
         self.last_req = 0
         self.excess = 0
-        adist = functools.partial(random.expovariate, 50)
+        adist = functools.partial(random.expovariate, 0.5)
         sdist = functools.partial(random.expovariate, 0.01)  # mean size 100 bytes
         samp_dist = functools.partial(random.expovariate, 1.0)
         port_rate = 1000.0
         self.pg = PacketGenerator(self.env, "Greg", adist, sdist)
-        self.port = SwitchPort(self.env, port_rate, qlimit=10000)
+        self.port = SwitchPort(self.env, port_rate, qlimit=10000000)
         self.pg.out = self.port
         self.sender = self.env.process(self.ONU_sender(cable))
 
@@ -182,7 +219,8 @@ class ONU(object):
         while True:
 
             #b_size =self.port.byte_size
-            if self.port.byte_size > 0:
+
+            if self.port.byte_size >= 18000:
                 self.last_req = self.port.byte_size
                 self.port.set_last_b_size(self.port.byte_size)
                 msg = {'text':"ONU %s sent this REQUEST for %.6f at %f" %
@@ -192,12 +230,25 @@ class ONU(object):
                 #ONU_receiver(mover e criar novo processo)
 
                 grant = yield cable.get_grant(self.oid)
-                self.excess = self.last_req - grant['grant_size']
+                grant_size = grant['grant_size']
+                #pred_times = random.randint(0,4)
+                pred_times = 0
+                #print ("ONU %s pred = %s" % (self.oid,pred_times))
+                self.excess = self.last_req - grant_size
                 #b_size =self.port.byte_size
                 #self.newly_arrived.append(b_size - self.last_req)
-                self.port.set_grant(grant['grant_size'])
-                sent_pkt = self.env.process(self.port.sent(self.oid))
-                yield sent_pkt
+                while True:
+                    self.port.set_grant(grant_size)
+                    sent_pkt = self.env.process(self.port.sent(self.oid))
+                    yield sent_pkt
+                    if pred_times > 0:
+                        pred_times -= 1
+                        grant_size = 18000
+                        wait_cycle = 2*(2*self.delay + (grant_size * 8)/float(1000000000))
+                        print ("ONU %s esperando ciclo para enviar pred %s" % (self.oid,self.env.now))
+                        yield self.env.timeout(wait_cycle)
+                    else:
+                        break
             else:
                 yield self.env.timeout(self.delay)
 
@@ -215,7 +266,8 @@ class OLT(object):
             bits = b_size * 8
             sending_time = 	bits/float(1000000000)
             grant_time = delay + sending_time + self.guard_int
-            #print("ONU %s: grant time for %s is %f" % (ONU.oid,b_size,grant_time))
+            print("ONU %s: grant time for %s is between %f and %f" %
+                (ONU.oid,b_size,self.env.now, self.env.now +grant_time))
             #enviar pelo cabo o buffer para a onu
             msg = {'grant_size': b_size}
             cable.put_grant(ONU,msg)
@@ -246,7 +298,8 @@ env = simpy.Environment()
 cable = Cable(env, 10)
 ONU_List = []
 for i in range(NUMBER_OF_ONUs):
-    distance = random.randint(60,100)
+    #distance = random.randint(60,100)
+    distance = 100
     ONU_List.append(ONU(distance,i,env,cable))
 
 olt = OLT(env,cable)
