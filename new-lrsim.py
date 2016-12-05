@@ -265,6 +265,7 @@ class SwitchPort(object):
 class ONU(object):
     def __init__(self,distance,oid,env,cable):
         self.env = env
+        self.grant_wait = simpy.Store(self.env)
         self.distance = distance
         self.oid = oid
         self.delay = self.distance/ float(210000)
@@ -279,6 +280,22 @@ class ONU(object):
         self.port = SwitchPort(self.env, port_rate, qlimit=10000000)
         self.pg.out = self.port
         self.sender = self.env.process(self.ONU_sender(cable))
+        self.receiver = self.env.process(self.ONU_receiver(cable))
+
+    def ONU_receiver(self,cable):
+        while True:
+            grant = yield cable.get_grant(self.oid)
+            grant_size = grant['grant_size']
+            grant_final_time = grant['grant_final_time']
+            #pred_times = random.randint(0,4)
+            #print ("ONU %s pred = %s" % (self.oid,pred_times))
+            self.excess = self.last_req - grant_size
+            #b_size =self.port.byte_size
+            #self.newly_arrived.append(b_size - self.last_req)
+            self.port.set_grant(grant)
+            sent_pkt = self.env.process(self.port.sent(self.oid))
+            yield sent_pkt
+            yield self.grant_wait.put("ok")
 
     def ONU_sender(self, cable):
         """A process which randomly generates messages."""
@@ -292,30 +309,7 @@ class ONU(object):
                 msg = {'text':"ONU %s sent this REQUEST for %.6f at %f" %
                     (self.oid,self.port.byte_size, self.env.now),'buffer_size':self.port.byte_size,'ONU':self}
                 cable.put((msg),self.delay)
-
-                #ONU_receiver(mover e criar novo processo)
-
-                grant = yield cable.get_grant(self.oid)
-                grant_size = grant['grant_size']
-                grant_final_time = grant['grant_final_time']
-                #pred_times = random.randint(0,4)
-                pred_times = 0
-                #print ("ONU %s pred = %s" % (self.oid,pred_times))
-                self.excess = self.last_req - grant_size
-                #b_size =self.port.byte_size
-                #self.newly_arrived.append(b_size - self.last_req)
-                while True:
-                    self.port.set_grant(grant)
-                    sent_pkt = self.env.process(self.port.sent(self.oid))
-                    yield sent_pkt
-                    if pred_times > 0:
-                        pred_times -= 1
-                        grant_size = 18000
-                        wait_cycle = 2*(2*self.delay + (grant_size * 8)/float(1000000000))
-                        print ("ONU %s esperando ciclo para enviar pred %s" % (self.oid,self.env.now))
-                        yield self.env.timeout(wait_cycle)
-                    else:
-                        break
+                yield self.grant_wait.get()
             else:
                 yield self.env.timeout(self.delay)
 
