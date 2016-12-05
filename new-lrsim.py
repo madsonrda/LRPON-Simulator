@@ -94,6 +94,7 @@ class SwitchPort(object):
         self.store = simpy.Store(env)
         self.res = simpy.Resource(env, capacity=1)
         self.grant_size = 0
+        self.grant_final_time = 0
         self.guard_int = 0.000001
         self.rate = rate
         self.env = env
@@ -107,65 +108,130 @@ class SwitchPort(object):
         self.busy = 0  # Used to track if a packet is currently being sent
         self.action = env.process(self.run())  # starts the run() method as a SimPy process
         self.msg = None
+        self.grant_loop = False
 
-    def set_grant(self,grant_size):
-        self.grant_size = grant_size
+    def set_grant(self,grant):
+        self.grant_size = grant['grant_size']
+        self.grant_final_time = grant['grant_final_time']
+
     def set_last_b_size(self,last_b_size):
         self.last_byte_size = last_b_size
 
     def get_msg(self):
-        msg = (yield self.store.get() )
-        #print("Momento em que ha pacotes a serem enviados  %s" % self.env.now)
-        self.msg = msg
+        try:
+            msg = (yield self.store.get() )
+            #print("Momento em que ha pacotes a serem enviados  %s" % self.env.now)
+            #print msg
+            self.msg = msg
+        except simpy.Interrupt as i:
+            print('get_msg interrupted at', env.now, 'msg:', i.cause)
+        #print self.grant_loop
+        if not self.grant_loop:
+            self.store.put(msg)
+            #print "pacote perdido"
+
+
+    # def sent(self,ONU_id):
+    #     self.grant_loop = True
+    #     #print("ONU %s: buffer-req %s, grant %s, current_buffer %s" % (ONU_id,self.last_byte_size,self.grant_size,self.byte_size))
+    #     #print("Momento em que esta liberado para enviar os pacotes %s" % self.env.now)
+    #     #print self.env.now
+    #     #print (self.grant_size * 8)/float(1000000000)
+    #     #grant_final_time = env.now + (self.grant_size * 8)/float(1000000000)
+    #     print ("ONU %s: tempo limite do grant %s" % (ONU_id, self.grant_final_time))
+    #     while self.grant_size > 0:
+    #         #print ("grant_size = %s" % (self.grant_size))
+    #         #print self.env.now
+    #         #msg = (yield self.store.get() | self.env.timeout(grant_final_time - self.env.now)).values()
+    #         get_msg = self.env.process(self.get_msg())
+    #         grant_timeout = self.env.timeout(self.grant_final_time - self.env.now)
+    #         #print self.env.now
+    #         yield get_msg | grant_timeout
+    #         #print self.env.now
+    #         #print grant_final_time
+    #         if (self.grant_final_time < env.now):
+    #             print "acabou tempo da grant"
+    #             break
+    #         if self.msg is not None:
+    #             msg = self.msg
+    #         else:
+    #             #print "msg None"
+    #             break
+    #         self.busy = 1
+    #         if (self.grant_size - msg.size) < -1:
+    #             self.store.put(msg)
+    #             #print "nao enviei (pouco grant)"
+    #             break
+    #         #print ("msg_size = %s" % (msg.size))
+    #         self.byte_size -= msg.size
+    #         self.grant_size -= msg.size
+    #         bits = msg.size * 8
+    #         sending_time = 	bits/float(1000000000)
+    #         #Prara evitar fragmentacao se passar o a janela do grant
+    #         if env.now + sending_time > self.grant_final_time + self.guard_int:
+    #             self.byte_size += msg.size
+    #             self.grant_size += msg.size
+    #             self.store.put(msg)
+    #             #print env.now + sending_time
+    #             #print "nao enviei (pouco tempo)"
+    #             break
+    #         yield self.env.timeout(sending_time)
+    #         #print("paket delay is %.6f" % (self.env.now - msg.time))
+    #         Delay.append(self.env.now - msg.time)
+    #         print("ENVIEI % s" % (msg))
+    #         self.msg = None
+
+
 
     def sent(self,ONU_id):
-        #print("ONU %s: buffer-req %s, grant %s, current_buffer %s" % (ONU_id,self.last_byte_size,self.grant_size,self.byte_size))
-        #print("Momento em que esta liberado para enviar os pacotes %s" % self.env.now)
-        #print self.env.now
-        #print (self.grant_size * 8)/float(1000000000)
-        grant_final_time = env.now + (self.grant_size * 8)/float(1000000000)
-        #print ("tempo limite do grant %s" % (grant_final_time))
-        while self.grant_size > 0:
-            #print ("grant_size = %s" % (self.grant_size))
-            #print self.env.now
-            #msg = (yield self.store.get() | self.env.timeout(grant_final_time - self.env.now)).values()
+        self.grant_loop = True
+        #print ("ONU %s: tempo limite do grant %s" % (ONU_id, self.grant_final_time))
+        while self.grant_final_time + self.guard_int > self.env.now:
+
             get_msg = self.env.process(self.get_msg())
-            grant_timeout = self.env.timeout(grant_final_time - self.env.now)
-            #print self.env.now
+            grant_timeout = self.env.timeout(self.grant_final_time - self.env.now)
             yield get_msg | grant_timeout
             #print self.env.now
-            #print grant_final_time
-            if (grant_final_time < env.now):
+            if (self.grant_final_time <= self.env.now):
                 #print "acabou tempo da grant"
+                #get_msg.interrupt('acabou tempo da grant')
                 break
             if self.msg is not None:
                 msg = self.msg
             else:
                 #print "msg None"
+                # if not get_msg.triggered:
+                #     get_msg.interrupt('nao ha pacote no buffer')
                 break
             self.busy = 1
-            if (self.grant_size - msg.size) < -1:
-                self.store.put(msg)
-                #print "nao enviei (pouco grant)"
-                break
+            # if (self.grant_size - msg.size) < -1:
+            #     self.store.put(msg)
+            #     #print "nao enviei (pouco grant)"
+            #     break
             #print ("msg_size = %s" % (msg.size))
             self.byte_size -= msg.size
-            self.grant_size -= msg.size
+            if self.byte_size < 0:
+                #print("ONU %s: buffer negativo %s" % (ONU_id,self.byte_size))
+                self.byte_size += msg.size
+                self.store.put(msg)
+                break
+            #self.grant_size -= msg.size
             bits = msg.size * 8
             sending_time = 	bits/float(1000000000)
             #Prara evitar fragmentacao se passar o a janela do grant
-            if env.now + sending_time > grant_final_time + self.guard_int:
+            if env.now + sending_time > self.grant_final_time + self.guard_int:
                 self.byte_size += msg.size
-                self.grant_size += msg.size
+                #self.grant_size += msg.size
                 self.store.put(msg)
-                #print env.now + sending_time
                 #print "nao enviei (pouco tempo)"
                 break
             yield self.env.timeout(sending_time)
             #print("paket delay is %.6f" % (self.env.now - msg.time))
             Delay.append(self.env.now - msg.time)
-            #print "ENVIEI"
+            #print("ENVIEI % s" % (msg))
             self.msg = None
+        self.grant_loop = False
+
 
 
     def run(self):
@@ -231,6 +297,7 @@ class ONU(object):
 
                 grant = yield cable.get_grant(self.oid)
                 grant_size = grant['grant_size']
+                grant_final_time = grant['grant_final_time']
                 #pred_times = random.randint(0,4)
                 pred_times = 0
                 #print ("ONU %s pred = %s" % (self.oid,pred_times))
@@ -238,7 +305,7 @@ class ONU(object):
                 #b_size =self.port.byte_size
                 #self.newly_arrived.append(b_size - self.last_req)
                 while True:
-                    self.port.set_grant(grant_size)
+                    self.port.set_grant(grant)
                     sent_pkt = self.env.process(self.port.sent(self.oid))
                     yield sent_pkt
                     if pred_times > 0:
@@ -266,10 +333,12 @@ class OLT(object):
             bits = b_size * 8
             sending_time = 	bits/float(1000000000)
             grant_time = delay + sending_time + self.guard_int
-            print("ONU %s: grant time for %s is between %f and %f" %
-                (ONU.oid,b_size,self.env.now, self.env.now +grant_time))
+            grant_final_time = self.env.now +grant_time
+            #print("ONU %s: grant time for %s is between %s and %s" %
+                #(ONU.oid,b_size,self.env.now, grant_final_time))
             #enviar pelo cabo o buffer para a onu
-            msg = {'grant_size': b_size}
+            print("%s,%s,%s" % (ONU.oid,self.env.now, grant_final_time))
+            msg = {'grant_size': b_size, 'grant_final_time': grant_final_time}
             cable.put_grant(ONU,msg)
             yield self.env.timeout(grant_time)
             #return grant_time
@@ -282,7 +351,7 @@ class OLT(object):
             msg = yield cable.get()
             #print('OLT Received this at %f while %s' % (self.env.now, msg['text']))
             REQUEST.append((msg['ONU'].oid,msg['buffer_size'],self.env.now))
-            print("%s,%s,%f" % (msg['ONU'].oid,msg['buffer_size'],self.env.now))
+            #print("%s,%s,%f" % (msg['ONU'].oid,msg['buffer_size'],self.env.now))
             self.env.process(self.DBA_IPACT(msg['ONU'],msg['buffer_size'],cable))
             #dba = self.DBA_IPACT(msg['ONU'].delay,msg['queue_size'])
             #yield self.env.timeout(dba)
