@@ -7,10 +7,12 @@ import numpy
 SIM_DURATION = 60
 RANDOM_SEED = 30
 REQUEST = []
-NUMBER_OF_ONUs = 3
+NUMBER_OF_ONUs = 16
 PKT_SIZE = 9000
 Delay = []
-
+ONU0PRED = open('onu0pred','rb')
+ONU1PRED = open('onu1pred','rb')
+ONU2PRED = open('onu2pred','rb')
 
 
 class Cable(object):
@@ -287,14 +289,21 @@ class ONU(object):
             grant = yield cable.get_grant(self.oid)
             grant_size = grant['grant_size']
             grant_final_time = grant['grant_final_time']
-            #pred_times = random.randint(0,4)
-            #print ("ONU %s pred = %s" % (self.oid,pred_times))
+            grant_prediction = grant['prediction']
             self.excess = self.last_req - grant_size
-            #b_size =self.port.byte_size
-            #self.newly_arrived.append(b_size - self.last_req)
             self.port.set_grant(grant)
             sent_pkt = self.env.process(self.port.sent(self.oid))
             yield sent_pkt
+            if grant_prediction:
+                for pred in grant_prediction[1:]:
+                    pred_grant = {'grant_size': grant_size, 'grant_final_time': pred[1]}
+                    print pred
+                    print self.env.now
+                    next_grant = pred[0] - self.env.now
+                    yield self.env.timeout(next_grant)
+                    self.port.set_grant(pred_grant)
+                    sent_pkt = self.env.process(self.port.sent(self.oid))
+                    yield sent_pkt
             yield self.grant_wait.put("ok")
 
     def ONU_sender(self, cable):
@@ -320,9 +329,45 @@ class OLT(object):
         self.counter = simpy.Resource(self.env, capacity=1)
         self.receiver = self.env.process(self.OLT_receiver(cable))
 
+
+    def predictor(self,ONU_id):
+        #print ONU_id
+        if ONU_id == 0:
+            #print "pred 0"
+            #return ast.literal_eval(ONU0PRED.readline())
+            pred = ONU0PRED.read()
+            p = pred.split()
+            l = []
+            for i in range(len(p)/2):
+                l.append([float(p[2*i]),float(p[2*i+1])])
+            return l
+        if ONU_id == 1:
+            #print "pred 1"
+            #return ast.literal_eval(ONU1PRED.readline())
+            pred = ONU1PRED.read()
+            p = pred.split()
+            l = []
+            for i in range(len(p)/2):
+                l.append([float(p[2*i]),float(p[2*i+1])])
+            return l
+        if ONU_id == 2:
+            #print "pred 2"
+            #return ast.literal_eval(ONU2PRED.readline())
+            pred = ONU2PRED.read()
+            p = pred.split()
+            l = []
+            for i in range(len(p)/2):
+                l.append([float(p[2*i]),float(p[2*i+1])])
+            return l
+
     def DBA_IPACT(self,ONU,b_size,cable):
         with self.counter.request() as my_turn:
             yield my_turn
+            # try:
+            #     prediction = self.predictor(ONU.oid)
+            # except Exception as e:
+            #     prediction = None
+            prediction = None
             delay = ONU.delay
             bits = b_size * 8
             sending_time = 	bits/float(1000000000)
@@ -332,11 +377,10 @@ class OLT(object):
                 #(ONU.oid,b_size,self.env.now, grant_final_time))
             #enviar pelo cabo o buffer para a onu
             print("%s,%s,%s" % (ONU.oid,self.env.now, grant_final_time))
-            msg = {'grant_size': b_size, 'grant_final_time': grant_final_time}
+            msg = {'grant_size': b_size, 'grant_final_time': grant_final_time, 'prediction': prediction}
             cable.put_grant(ONU,msg)
             yield self.env.timeout(grant_time)
             #return grant_time
-
     def OLT_receiver(self,cable):
         """A process which consumes messages."""
         while True:
