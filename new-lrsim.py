@@ -3,16 +3,19 @@ import random
 import functools
 import time
 import numpy
+import pandas as pd
+import matplotlib.pyplot as plt
 
-SIM_DURATION = 60
-RANDOM_SEED = 30
+SIM_DURATION = 30
+RANDOM_SEED = 20
 REQUEST = []
-NUMBER_OF_ONUs = 16
+NUMBER_OF_ONUs = 30
 PKT_SIZE = 9000
-Delay = []
+
 ONU0PRED = open('onu0pred','rb')
 ONU1PRED = open('onu1pred','rb')
 ONU2PRED = open('onu2pred','rb')
+
 
 
 class Cable(object):
@@ -84,6 +87,7 @@ class PacketGenerator(object):
             self.packets_sent += 1
             # print "PKT_SENT"
             size = PKT_SIZE
+            PKT.append(size)
             #p = Packet(self.env.now, self.sdist(), self.packets_sent, src=self.id, flow_id=self.flow_id)
             p = Packet(self.env.now, size, self.packets_sent, src=self.id, flow_id=self.flow_id)
             self.out.put(p)
@@ -228,6 +232,7 @@ class SwitchPort(object):
                 #print "nao enviei (pouco tempo)"
                 break
             yield self.env.timeout(sending_time)
+            UTILIZATION.append(sending_time)
             #print("paket delay is %.6f" % (self.env.now - msg.time))
             Delay.append(self.env.now - msg.time)
             #print("ENVIEI % s" % (msg))
@@ -265,7 +270,7 @@ class SwitchPort(object):
             self.store.put(pkt)
 
 class ONU(object):
-    def __init__(self,distance,oid,env,cable):
+    def __init__(self,distance,oid,env,cable,exp):
         self.env = env
         self.grant_wait = simpy.Store(self.env)
         self.distance = distance
@@ -274,12 +279,12 @@ class ONU(object):
         self.thread_delay = 0
         self.last_req = 0
         self.excess = 0
-        adist = functools.partial(random.expovariate, 0.5)
+        adist = functools.partial(random.expovariate, exp)
         sdist = functools.partial(random.expovariate, 0.01)  # mean size 100 bytes
         samp_dist = functools.partial(random.expovariate, 1.0)
         port_rate = 1000.0
         self.pg = PacketGenerator(self.env, "Greg", adist, sdist)
-        self.port = SwitchPort(self.env, port_rate, qlimit=10000000)
+        self.port = SwitchPort(self.env, port_rate, qlimit=None)
         self.pg.out = self.port
         self.sender = self.env.process(self.ONU_sender(cable))
         self.receiver = self.env.process(self.ONU_receiver(cable))
@@ -376,7 +381,7 @@ class OLT(object):
             #print("ONU %s: grant time for %s is between %s and %s" %
                 #(ONU.oid,b_size,self.env.now, grant_final_time))
             #enviar pelo cabo o buffer para a onu
-            print("%s,%s,%s" % (ONU.oid,self.env.now, grant_final_time))
+            #print("%s,%s,%s" % (ONU.oid,self.env.now, grant_final_time))
             msg = {'grant_size': b_size, 'grant_final_time': grant_final_time, 'prediction': prediction}
             cable.put_grant(ONU,msg)
             yield self.env.timeout(grant_time)
@@ -397,19 +402,50 @@ class OLT(object):
 
 # Setup and start the simulation
 #print('Event Latency')
-print("ONU,buffer,time")
-random.seed(RANDOM_SEED)
-env = simpy.Environment()
+#print("ONU,buffer,time")
+EXP = 116
+DELAY = {}
+LOAD = {}
+for j in range(4):
+    DELAY[j] = []
+    LOAD[j]= []
+for j in range(1):
+
+    for k,exp in enumerate([116,232,348,464]):
+        UTILIZATION = []
+        PKT = []
+        Delay = []
+        random.seed(RANDOM_SEED)
+        env = simpy.Environment()
 
 
-cable = Cable(env, 10)
-ONU_List = []
-for i in range(NUMBER_OF_ONUs):
-    #distance = random.randint(60,100)
-    distance = 100
-    ONU_List.append(ONU(distance,i,env,cable))
+        cable = Cable(env, 10)
+        ONU_List = []
+        for i in range(NUMBER_OF_ONUs):
+            #distance = random.randint(60,100)
+            distance = 100
+            ONU_List.append(ONU(distance,i,env,cable,exp))
 
-olt = OLT(env,cable)
-env.run(until=SIM_DURATION)
+        olt = OLT(env,cable)
+        env.run(until=SIM_DURATION)
+        DELAY[k].append(numpy.mean(Delay))
+        LOAD[k].append(100*(numpy.sum(PKT)*8)/(float(SIM_DURATION)*float(1000000000)))
+    RANDOM_SEED += 10
+
+df = pd.DataFrame(DELAY)
+df2 = pd.DataFrame(LOAD)
+X=df2.mean().apply(numpy.round).values
+Y=df.mean().values
+delay_std = df.std().values
+plt.figure()
+plt.title("fig")
+plt.xlabel("load")
+plt.ylabel("delay")
+plt.fill_between(X, Y - delay_std,Y + delay_std, alpha=0.1,color="r")
+plt.plot(X, Y, 'o-', color="r",label="IPACT")
+plt.show()
 #print REQUEST[-6:]
-print numpy.mean(Delay)
+# print("average pkt delay: %s" % (numpy.mean(Delay)))
+# print("channel idle: %s%%" % (100-(100 * numpy.sum(UTILIZATION)/float(SIM_DURATION))))
+# rate = (numpy.sum(PKT)*8)/(float(SIM_DURATION)*float(1000000000))
+# print("upstream utilization: %s%%" % (100*(rate)))
