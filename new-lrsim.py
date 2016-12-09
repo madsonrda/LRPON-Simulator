@@ -192,7 +192,7 @@ class SwitchPort(object):
     def sent(self,ONU_id):
         self.grant_loop = True
         #print ("ONU %s: tempo limite do grant %s" % (ONU_id, self.grant_final_time))
-        while self.grant_final_time + self.guard_int > self.env.now:
+        while self.grant_final_time > self.env.now:
 
             get_msg = self.env.process(self.get_msg())
             grant_timeout = self.env.timeout(self.grant_final_time - self.env.now)
@@ -302,8 +302,7 @@ class ONU(object):
             if grant_prediction:
                 for pred in grant_prediction[1:]:
                     pred_grant = {'grant_size': grant_size, 'grant_final_time': pred[1]}
-                    print pred
-                    print self.env.now
+                    print("ONU %s:%s,%s"% (self.oid,pred,self.env.now))
                     next_grant = pred[0] - self.env.now
                     yield self.env.timeout(next_grant)
                     self.port.set_grant(pred_grant)
@@ -372,7 +371,6 @@ class OLT(object):
             #     prediction = self.predictor(ONU.oid)
             # except Exception as e:
             #     prediction = None
-            prediction = None
             delay = ONU.delay
             bits = b_size * 8
             sending_time = 	bits/float(1000000000)
@@ -382,6 +380,15 @@ class OLT(object):
                 #(ONU.oid,b_size,self.env.now, grant_final_time))
             #enviar pelo cabo o buffer para a onu
             #print("%s,%s,%s" % (ONU.oid,self.env.now, grant_final_time))
+            if not prediction_on:
+                prediction = None
+                PREDICTIONS[ONU.oid].append([self.env.now, grant_final_time])
+            elif len(PREDICTIONS[ONU.oid]) > 0:
+                prediction = PREDICTIONS[ONU.oid]
+                PREDICTIONS[ONU.oid] = []
+            else:
+                prediction = None
+
             msg = {'grant_size': b_size, 'grant_final_time': grant_final_time, 'prediction': prediction}
             cable.put_grant(ONU,msg)
             yield self.env.timeout(grant_time)
@@ -406,30 +413,47 @@ class OLT(object):
 EXP = 116
 DELAY = {}
 LOAD = {}
+PRED_DELAY = {}
+PRED_LOAD = {}
+PREDICTIONS = {}
 for j in range(4):
     DELAY[j] = []
     LOAD[j]= []
-for j in range(1):
+    PRED_DELAY[j] = []
+    PRED_LOAD[j]= []
+for j in range(4):
 
     for k,exp in enumerate([116,232,348,464]):
-        UTILIZATION = []
-        PKT = []
-        Delay = []
-        random.seed(RANDOM_SEED)
-        env = simpy.Environment()
-
-
-        cable = Cable(env, 10)
-        ONU_List = []
+    #for k,exp in enumerate([116]):
+        prediction_on=False
+        print "proximo sem pred"
         for i in range(NUMBER_OF_ONUs):
-            #distance = random.randint(60,100)
-            distance = 100
-            ONU_List.append(ONU(distance,i,env,cable,exp))
+            PREDICTIONS[i] = []
+        for m in range(2):
+            UTILIZATION = []
+            PKT = []
+            Delay = []
+            random.seed(RANDOM_SEED)
+            env = simpy.Environment()
 
-        olt = OLT(env,cable)
-        env.run(until=SIM_DURATION)
-        DELAY[k].append(numpy.mean(Delay))
-        LOAD[k].append(100*(numpy.sum(PKT)*8)/(float(SIM_DURATION)*float(1000000000)))
+
+            cable = Cable(env, 10)
+            ONU_List = []
+            for i in range(NUMBER_OF_ONUs):
+                #distance = random.randint(60,100)
+                distance = 100
+                ONU_List.append(ONU(distance,i,env,cable,exp))
+
+            olt = OLT(env,cable)
+            env.run(until=SIM_DURATION)
+            if not prediction_on:
+                DELAY[k].append(numpy.mean(Delay))
+                LOAD[k].append(100*(numpy.sum(PKT)*8)/(float(SIM_DURATION)*float(1000000000)))
+            else:
+                PRED_DELAY[k].append(numpy.mean(Delay))
+                PRED_LOAD[k].append(100*(numpy.sum(PKT)*8)/(float(SIM_DURATION)*float(1000000000)))
+            prediction_on=True
+            print "proximo com pred"
     RANDOM_SEED += 10
 
 df = pd.DataFrame(DELAY)
@@ -437,12 +461,20 @@ df2 = pd.DataFrame(LOAD)
 X=df2.mean().apply(numpy.round).values
 Y=df.mean().values
 delay_std = df.std().values
+
+df3 = pd.DataFrame(PRED_DELAY)
+df4 = pd.DataFrame(PRED_LOAD)
+X1=df4.mean().apply(numpy.round).values
+Y1=df3.mean().values
+PRED_delay_std = df3.std().values
 plt.figure()
 plt.title("fig")
 plt.xlabel("load")
 plt.ylabel("delay")
 plt.fill_between(X, Y - delay_std,Y + delay_std, alpha=0.1,color="r")
+plt.fill_between(X1, Y1 - PRED_delay_std,Y1 + PRED_delay_std, alpha=0.1,color="b")
 plt.plot(X, Y, 'o-', color="r",label="IPACT")
+plt.plot(X1, Y1, 'o-', color="b",label="IPACT_PRED")
 plt.show()
 #print REQUEST[-6:]
 # print("average pkt delay: %s" % (numpy.mean(Delay)))
