@@ -416,14 +416,15 @@ LOAD = {}
 PRED_DELAY = {}
 PRED_LOAD = {}
 PREDICTIONS = {}
-for j in range(4):
+for j in range(14):
     DELAY[j] = []
     LOAD[j]= []
     PRED_DELAY[j] = []
     PRED_LOAD[j]= []
 for j in range(4):
 
-    for k,exp in enumerate([116,232,348,464]):
+    for k,exp in enumerate([87,116,145,174,203,232,261,
+        290,319,348,377,406,435,464]):
     #for k,exp in enumerate([116]):
         prediction_on=False
         print "proximo sem pred"
