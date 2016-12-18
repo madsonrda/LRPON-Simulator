@@ -360,9 +360,10 @@ class OLT(object):
 # Setup and start the simulation
 #print('Event Latency')
 #print("ONU,buffer,time")
-EXP = [87,116,145,174,203,232,261,
-    290,319,348,377,406,435,464]
-#EXP = [406,435,464]
+if NUMBER_OF_ONUs == 30:
+    EXP = [87,116,174,232,290,348,406,464]
+else:
+    EXP = [45,58,87,116,145,174,203,232]
 TIMES_SEED = int(sys.argv[2])
 DELAY = {}
 LOAD = {}
