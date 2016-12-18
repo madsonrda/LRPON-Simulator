@@ -393,7 +393,7 @@ for j in range(len(EXP)):
     PRED_THROUGHPUT[j] = []
     PRED_THROUGHPUT_R[j] =[]
 for j in range(TIMES_SEED):
-
+    print "SEED %s" % RANDOM_SEED
     for k,exp in enumerate(EXP):
     #for k,exp in enumerate([116]):
         prediction_on=False
