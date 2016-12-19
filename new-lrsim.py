@@ -382,7 +382,7 @@ PRED_LOAD_R = {}
 PREDICTIONS = {}
 PREDICTIONS_R = {}
 prediction_file = True
-d = {0:18,1:24,2:37,3:49,4:62,5:74,6:87,7:99}
+d = {0:49,1:99}
 
 
 for j in range(len(EXP)):
@@ -403,13 +403,13 @@ for j in range(TIMES_SEED):
     for k,exp in enumerate(EXP):
     #for k,exp in enumerate([116]):
         prediction_on=False
-        prediction_file = False
-        AUX = True
+        prediction_file = True
+        AUX = False
         #print "proximo sem pred"
         for i in range(NUMBER_OF_ONUs):
             PREDICTIONS[i] = []
             PREDICTIONS_R[i] = []
-        for m in range(2):
+        for m in range(3):
             UTILIZATION = []
             SLOT = []
             PKT = []
@@ -513,101 +513,101 @@ print df_IPACT_throughput
 print "mean %s" % IPACT_TRHOUGHPUT
 print "std %s" % IPACT_throughput_std
 
-# df_PERF_DELAY = pd.DataFrame(PRED_DELAY)
-# df_PERF_LOAD = pd.DataFrame(PRED_LOAD)
-# df_PERF_USAGE = pd.DataFrame(PRED_USAGE)
-# df_PERF_throughput = pd.DataFrame(PRED_THROUGHPUT)
-# PERF_LOAD=df_PERF_LOAD.mean().apply(numpy.round).values
-# PERF_DELAY=df_PERF_DELAY.mean().values
-# PERF_delay_std = df_PERF_DELAY.std().values
-# PERF_USAGE = df_PERF_USAGE.mean().values
-# PERF_usage_std =df_PERF_USAGE.std().values
-# PERF_THROUGHPUT = df_PERF_throughput.mean().values
-# PERF_throughput_std =df_PERF_throughput.std().values
-#
-# print"#PERFEITA"
-# print "DELAY"
-# print df_PERF_DELAY
-# print "mean %s" % PERF_DELAY
-# print "std %s" % PERF_delay_std
-# print "UTILIZATION"
-# print df_PERF_USAGE
-# print "mean %s" % PERF_USAGE
-# print "std %s" % PERF_usage_std
-# print "THROUGHPUT"
-# print df_PERF_throughput
-# print "mean %s" % df_PERF_throughput.mean().values
-# print "std %s" % PERF_throughput_std
+df_PERF_DELAY = pd.DataFrame(PRED_DELAY)
+df_PERF_LOAD = pd.DataFrame(PRED_LOAD)
+df_PERF_USAGE = pd.DataFrame(PRED_USAGE)
+df_PERF_throughput = pd.DataFrame(PRED_THROUGHPUT)
+PERF_LOAD=df_PERF_LOAD.mean().apply(numpy.round).values
+PERF_DELAY=df_PERF_DELAY.mean().values
+PERF_delay_std = df_PERF_DELAY.std().values
+PERF_USAGE = df_PERF_USAGE.mean().values
+PERF_usage_std =df_PERF_USAGE.std().values
+PERF_THROUGHPUT = df_PERF_throughput.mean().values
+PERF_throughput_std =df_PERF_throughput.std().values
 
-# df_PROP_DELAY = pd.DataFrame(PRED_DELAY_R)
-# df_PROP_LOAD = pd.DataFrame(PRED_LOAD_R)
-# df_PROP_USAGE = pd.DataFrame(PRED_USAGE_R)
-# df_PROP_throughput = pd.DataFrame(PRED_THROUGHPUT_R)
-# PROP_LOAD=df_PROP_LOAD.mean().apply(numpy.round).values
-# PROP_DELAY=df_PROP_DELAY.mean().values
-# PROP_delay_std_R = df_PROP_DELAY.std().values
-# PROP_USAGE = df_PROP_USAGE.mean().values
-# PROP_usage_std_R = df_PROP_USAGE.std().values
-# PROP_THOUGHPUT = df_PROP_throughput.mean().values
-# PROP_throughput_std_R = df_PROP_throughput.std().values
+print"#PERFEITA"
+print "DELAY"
+print df_PERF_DELAY
+print "mean %s" % PERF_DELAY
+print "std %s" % PERF_delay_std
+print "UTILIZATION"
+print df_PERF_USAGE
+print "mean %s" % PERF_USAGE
+print "std %s" % PERF_usage_std
+print "THROUGHPUT"
+print df_PERF_throughput
+print "mean %s" % df_PERF_throughput.mean().values
+print "std %s" % PERF_throughput_std
 
-# print"#PROPOSTA"
-# print "DELAY"
-# print df_PROP_DELAY
-# print "mean %s" % PROP_DELAY
-# print "std %s" % PROP_delay_std_R
-# print "UTILIZATION"
-# print df_PROP_USAGE
-# print "mean %s" % PERF_USAGE
-# print "std %s" % PROP_usage_std_R
-# print "THROUGHPUT"
-# print df_PROP_throughput
-# print "mean %s" % df_PROP_throughput.mean().values
-# print "std %s" % PROP_throughput_std_R
-#
-# plt.figure()
-#
-# #DELAy
-# title = "{0}_ONU,{1}*SEED,max_grant={2},bucket={3},distance={4},max_buffer={5}".format(NUMBER_OF_ONUs,TIMES_SEED,sys.argv[5],sys.argv[4],sys.argv[3],sys.argv[6])
-# plt.title(title)
-# plt.xlabel("load (%)")
-# plt.ylabel("delay (s)")
-# plt.fill_between(IPACT_LOAD, IPACT_DELAY - IPACT_delay_std,IPACT_DELAY + IPACT_delay_std, alpha=0.1,color="r")
-#
-# plt.fill_between(PERF_LOAD, PERF_DELAY - PERF_delay_std,PERF_DELAY + PERF_delay_std, alpha=0.1,color="b")
-# plt.fill_between(PROP_LOAD, PROP_DELAY - PROP_delay_std_R,PROP_DELAY + PROP_delay_std_R, alpha=0.1,color="g")
-# plt.plot(IPACT_LOAD, IPACT_DELAY, 'o-', color="r",label="IPACT")
-# plt.plot(PERF_LOAD, PERF_DELAY, '>-', color="b",label="PRED_Perfeita")
-# plt.plot(PROP_LOAD, PROP_DELAY, '+-', color="g",label="Pred_proposta")
-# plt.legend(loc='upper center', shadow=True)
-# plt.savefig("Delay-"+title)
-#
-# #USAGE
-# plt.figure()
-# plt.xlabel("load (%)")
-# plt.ylabel("utilization (%)")
-# plt.fill_between(IPACT_LOAD, IPACT_USAGE - IPACT_usage_std,IPACT_USAGE + IPACT_usage_std, alpha=0.1,color="r")
-# plt.fill_between(PERF_LOAD, PERF_USAGE - PERF_usage_std,PERF_USAGE + PERF_usage_std, alpha=0.1,color="b")
-# plt.fill_between(PROP_LOAD, PROP_USAGE - PROP_usage_std_R,PROP_USAGE + PROP_usage_std_R, alpha=0.1,color="g")
-# plt.plot(IPACT_LOAD, IPACT_USAGE, 'o-', color="r",label="IPACT")
-# plt.plot(PERF_LOAD, PERF_USAGE, '>-', color="b",label="PRED_Perfeita")
-# plt.plot(PROP_LOAD, PROP_USAGE, '+-', color="g",label="Pred_proposta")
-# plt.legend(loc='upper center', shadow=True)
-# plt.savefig("utilization-"+title)
-#
-# #THROUGHPUT
-# plt.figure()
-# plt.xlabel("load (%)")
-# plt.ylabel("throughput (%)")
-# plt.fill_between(IPACT_LOAD, IPACT_TRHOUGHPUT - IPACT_throughput_std,IPACT_TRHOUGHPUT + IPACT_throughput_std, alpha=0.1,color="r")
-# plt.fill_between(PERF_LOAD, PERF_THROUGHPUT - PERF_throughput_std,PERF_THROUGHPUT + PERF_throughput_std, alpha=0.1,color="b")
-# plt.fill_between(PROP_LOAD, PROP_THOUGHPUT - PROP_throughput_std_R,PROP_THOUGHPUT + PROP_throughput_std_R, alpha=0.1,color="g")
-# plt.plot(IPACT_LOAD, IPACT_TRHOUGHPUT, 'o-', color="r",label="IPACT")
-# plt.plot(PERF_LOAD, PERF_THROUGHPUT, '>-', color="b",label="PRED_Perfeita")
-# plt.plot(PROP_LOAD, PROP_THOUGHPUT, '+-', color="g",label="Pred_proposta")
-#
-# plt.legend(loc='upper center', shadow=True)
-# plt.savefig("Throughput-"+title)
+df_PROP_DELAY = pd.DataFrame(PRED_DELAY_R)
+df_PROP_LOAD = pd.DataFrame(PRED_LOAD_R)
+df_PROP_USAGE = pd.DataFrame(PRED_USAGE_R)
+df_PROP_throughput = pd.DataFrame(PRED_THROUGHPUT_R)
+PROP_LOAD=df_PROP_LOAD.mean().apply(numpy.round).values
+PROP_DELAY=df_PROP_DELAY.mean().values
+PROP_delay_std_R = df_PROP_DELAY.std().values
+PROP_USAGE = df_PROP_USAGE.mean().values
+PROP_usage_std_R = df_PROP_USAGE.std().values
+PROP_THOUGHPUT = df_PROP_throughput.mean().values
+PROP_throughput_std_R = df_PROP_throughput.std().values
+
+print"#PROPOSTA"
+print "DELAY"
+print df_PROP_DELAY
+print "mean %s" % PROP_DELAY
+print "std %s" % PROP_delay_std_R
+print "UTILIZATION"
+print df_PROP_USAGE
+print "mean %s" % PERF_USAGE
+print "std %s" % PROP_usage_std_R
+print "THROUGHPUT"
+print df_PROP_throughput
+print "mean %s" % df_PROP_throughput.mean().values
+print "std %s" % PROP_throughput_std_R
+
+plt.figure()
+
+#DELAy
+title = "{0}_ONU,{1}*SEED,max_grant={2},bucket={3},distance={4},max_buffer={5}".format(NUMBER_OF_ONUs,TIMES_SEED,sys.argv[5],sys.argv[4],sys.argv[3],sys.argv[6])
+plt.title(title)
+plt.xlabel("load (%)")
+plt.ylabel("delay (s)")
+plt.fill_between(IPACT_LOAD, IPACT_DELAY - IPACT_delay_std,IPACT_DELAY + IPACT_delay_std, alpha=0.1,color="r")
+
+plt.fill_between(PERF_LOAD, PERF_DELAY - PERF_delay_std,PERF_DELAY + PERF_delay_std, alpha=0.1,color="b")
+plt.fill_between(PROP_LOAD, PROP_DELAY - PROP_delay_std_R,PROP_DELAY + PROP_delay_std_R, alpha=0.1,color="g")
+plt.plot(IPACT_LOAD, IPACT_DELAY, 'o-', color="r",label="IPACT")
+plt.plot(PERF_LOAD, PERF_DELAY, '>-', color="b",label="PRED_Perfeita")
+plt.plot(PROP_LOAD, PROP_DELAY, '+-', color="g",label="Pred_proposta")
+plt.legend(loc='upper center', shadow=True)
+plt.savefig("Delay-"+title)
+
+#USAGE
+plt.figure()
+plt.xlabel("load (%)")
+plt.ylabel("utilization (%)")
+plt.fill_between(IPACT_LOAD, IPACT_USAGE - IPACT_usage_std,IPACT_USAGE + IPACT_usage_std, alpha=0.1,color="r")
+plt.fill_between(PERF_LOAD, PERF_USAGE - PERF_usage_std,PERF_USAGE + PERF_usage_std, alpha=0.1,color="b")
+plt.fill_between(PROP_LOAD, PROP_USAGE - PROP_usage_std_R,PROP_USAGE + PROP_usage_std_R, alpha=0.1,color="g")
+plt.plot(IPACT_LOAD, IPACT_USAGE, 'o-', color="r",label="IPACT")
+plt.plot(PERF_LOAD, PERF_USAGE, '>-', color="b",label="PRED_Perfeita")
+plt.plot(PROP_LOAD, PROP_USAGE, '+-', color="g",label="Pred_proposta")
+plt.legend(loc='upper center', shadow=True)
+plt.savefig("utilization-"+title)
+
+#THROUGHPUT
+plt.figure()
+plt.xlabel("load (%)")
+plt.ylabel("throughput (%)")
+plt.fill_between(IPACT_LOAD, IPACT_TRHOUGHPUT - IPACT_throughput_std,IPACT_TRHOUGHPUT + IPACT_throughput_std, alpha=0.1,color="r")
+plt.fill_between(PERF_LOAD, PERF_THROUGHPUT - PERF_throughput_std,PERF_THROUGHPUT + PERF_throughput_std, alpha=0.1,color="b")
+plt.fill_between(PROP_LOAD, PROP_THOUGHPUT - PROP_throughput_std_R,PROP_THOUGHPUT + PROP_throughput_std_R, alpha=0.1,color="g")
+plt.plot(IPACT_LOAD, IPACT_TRHOUGHPUT, 'o-', color="r",label="IPACT")
+plt.plot(PERF_LOAD, PERF_THROUGHPUT, '>-', color="b",label="PRED_Perfeita")
+plt.plot(PROP_LOAD, PROP_THOUGHPUT, '+-', color="g",label="Pred_proposta")
+
+plt.legend(loc='upper center', shadow=True)
+plt.savefig("Throughput-"+title)
 #plt.show()
 #print REQUEST[-6:]
 # print("average pkt delay: %s" % (numpy.mean(Delay)))
