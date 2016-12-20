@@ -361,9 +361,9 @@ class OLT(object):
 #print('Event Latency')
 #print("ONU,buffer,time")
 if NUMBER_OF_ONUs == 30:
-    EXP = [232,464]
+    EXP = [87,116,174,232,290,348,406,464]
 elif NUMBER_OF_ONUs == 60:
-    EXP = [116,232]
+    EXP = [45,58,87,116,145,174,203,232]
 else:
     EXP = [77,155]
 TIMES_SEED = int(sys.argv[2])
@@ -382,7 +382,7 @@ PRED_LOAD_R = {}
 PREDICTIONS = {}
 PREDICTIONS_R = {}
 prediction_file = True
-d = {0:49,1:99}
+d = {0:18,1:24,2:37,3:49,4:62,5:74,6:87,7:99}
 
 
 for j in range(len(EXP)):
@@ -449,6 +449,7 @@ for j in range(TIMES_SEED):
                     #print "lendo arquivo proposta"
                     time.sleep(1)
                     file_pred = open('result/load{0}_{1}onu_{2}km.pred'.format(d[k],NUMBER_OF_ONUs,int(sys.argv[3])),'rb')
+                    #file_pred = open('result/load{0}.pred'.format(d[k],NUMBER_OF_ONUs,int(sys.argv[3])),'rb')
                     allpred = file_pred.read()
                     file_pred.close()
                     allpred = allpred.split()
