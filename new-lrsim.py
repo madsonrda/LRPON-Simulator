@@ -13,6 +13,8 @@ REQUEST = []
 NUMBER_OF_ONUs = int(sys.argv[1])
 PKT_SIZE = 9000
 
+#simulador usado no SBRC2017
+
 # ONU0PRED = open('onu0pred','rb')
 # ONU1PRED = open('onu1pred','rb')
 # ONU2PRED = open('onu2pred','rb')
