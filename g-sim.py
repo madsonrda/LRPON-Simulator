@@ -7,6 +7,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import sys
 import argparse
+import logging
 
 
 #Parsing the inputs arguments
@@ -14,19 +15,27 @@ parser = argparse.ArgumentParser(description="Long Reach PON Simulator")
 group = parser.add_mutually_exclusive_group()
 #group.add_argument("-v", "--verbose", action="store_true")
 group.add_argument("-q", "--quiet", action="store_true")
-parser.add_argument("n", type=int, help="the number of ONUs")
-parser.add_argument("b", type=int, default=0, help="the size of the ONU sender bucket in bytes")
-parser.add_argument("q", type=int, default=0, help="the size of the ONU port queue in bytes")
+parser.add_argument("N", type=int, default=3, help="the number of ONUs")
+parser.add_argument("B", type=int, default=0, nargs='?', help="the size of the ONU sender bucket in bytes")
+parser.add_argument("Q", type=int, default=0, nargs='?',help="the size of the ONU port queue in bytes")
+parser.add_argument("M", type=float, default=0, nargs='?', help="The maximum size of buffer which a grant can allow")
+parser.add_argument("D", type=int, default=100, nargs='?', help="Distance in km from ONU to OLT")
 args = parser.parse_args()
 
 #Arguments
-NUMBER_OF_ONUs= args.n
+NUMBER_OF_ONUs= args.N
+DISTANCE = args.D
+MAX_GRANT_SIZE = args.M
+MAX_BUCKET_SIZE = args.B
+ONU_QUEUE_LIMIT = args.Q
 
 #settings
 SIM_DURATION = 30
 RANDOM_SEED = 20
 PKT_SIZE = 9000
 
+#logging
+logging.basicConfig(filename='g-sim.log',level=logging.DEBUG,format='%(asctime)s %(message)s')
 
 class Cable(object):
     """This class represents the propagation through a cable and the splitter."""
@@ -132,8 +141,8 @@ class ONUPort(object):
         self.grant_size = grant['grant_size']
         self.grant_final_time = grant['grant_final_time']
 
-    def update_last_buffer_size(self,last_buffe_size): #update the size of the last buffer request
-        self.last_buffer_size = self.byte_size
+    def update_last_buffer_size(self,requested_buffer): #update the size of the last buffer request
+        self.last_buffer_size = requested_buffer
 
     def get_last_buffer_size(self): #return the size of the last buffer request
         return self.last_buffer_size
@@ -143,6 +152,7 @@ class ONUPort(object):
             pkt = (yield self.store.get() )#getting a packet from the buffer
             self.pkt = pkt
         except simpy.Interrupt as i:
+            logging.debug("Error while getting a packet from the buffer ({})".format(i))
 
             pass
 
@@ -219,13 +229,11 @@ class ONU(object):
         self.distance = distance #fiber distance
         self.oid = oid #ONU indentifier
         self.delay = self.distance/ float(210000) # fiber propagation delay
-        self.thread_delay = 0 #remover
         self.excess = 0 #difference between the size of the request and the grant
         arrivals_dist = functools.partial(random.expovariate, exp) #packet arrival distribuition
         size_dist = functools.partial(random.expovariate, 0.01)  # packet size distribuition, mean size 100 bytes
-        samp_dist = functools.partial(random.expovariate, 1.0)#remover
         port_rate = 1000.0 #para que serve?
-        self.pg = PacketGenerator(self.env, "bbmp", adist, sdist,fix_pkt_size) #creates the packet generator
+        self.pg = PacketGenerator(self.env, "bbmp", arrivals_dist, size_dist,fix_pkt_size) #creates the packet generator
         if qlimit ==0:# checks if the queue has a size limit
             queue_limit = None
         else:
@@ -240,7 +248,7 @@ class ONU(object):
         while True:
             grant = yield cable.get_grant(self.oid)#waiting for a grant
 
-            self.excess = self.port.get_last_buffer_size - grant['grant_size'] #update the excess
+            self.excess = self.port.get_last_buffer_size() - grant['grant_size'] #update the excess
             self.port.set_grant(grant)
 
             sent_pkt = self.env.process(self.port.sent(self.oid))
@@ -254,7 +262,7 @@ class ONU(object):
                         next_grant = pred[0] - self.env.now#time until next grant begining
                         yield self.env.timeout(next_grant)#wait for the next grant
                     except Exception as e:
-                        #print e
+                        logging.debug("Error while waiting for the next grant ({})".format(e))
                         pass
 
                     self.port.set_grant(pred_grant)
@@ -270,11 +278,69 @@ class ONU(object):
         while True:
 
             if self.port.byte_size >= self.bucket:# send a REQUEST only if the queue size is greater than the bucket size
-
-                self.port.update_last_buffer_size()#update the size of the current/last buffer REQUEST
+                requested_buffer = self.port.byte_size #gets the size of the buffer that will be requested
+                self.port.update_last_buffer_size(requested_buffer)#update the size of the current/last buffer REQUEST
                 msg = {'text':"ONU %s sent this REQUEST for %.6f at %f" %
-                    (self.oid,self.port.byte_size, self.env.now),'buffer_size':self.port.byte_size,'ONU':self}
-                cable.put((msg),self.delay)# put the request message in the cable
+                    (self.oid,self.port.byte_size, self.env.now),'buffer_size':requested_buffer,'ONU':self}
+                cable.put_request((msg),self.delay)# put the request message in the cable
                 yield self.grant_store.get()# Wait for the grant processing to send the next request
             else:
                 yield self.env.timeout(self.delay)
+
+class OLT(object):
+    def __init__(self,env,cable,max_grant_size):
+        self.env = env
+        self.guard_interval = 0.000001
+        self.grant_store = simpy.Store(self.env)
+        self.counter = simpy.Resource(self.env, capacity=1)#create a queue of requests to DBA
+        self.receiver = self.env.process(self.OLT_receiver(cable))#
+        self.sender = self.env.process(self.OLT_sender(cable))#
+        self.max_grant_size = max_grant_size
+
+
+
+    def DBA_IPACT(self,ONU,buffer_size):
+        with self.counter.request() as my_turn:
+            yield my_turn
+
+            delay = ONU.delay
+
+            if self.max_grant_size > 0 and buffer_size > self.max_grant_size:
+                buffer_size = self.max_grant_size
+            bits = buffer_size * 8
+            sending_time = 	bits/float(1000000000)
+            grant_time = delay + sending_time + self.guard_interval
+            grant_final_time = self.env.now + grant_time
+
+
+            grant = {'ONU':ONU,'grant_size': buffer_size, 'grant_final_time': grant_final_time, 'prediction': None}
+            self.grant_store.put(grant)
+            yield self.env.timeout(grant_time)
+
+    def OLT_sender(self,cable):
+        """A process which sends a grant message to ONU"""
+        while True:
+            grant = yield self.grant_store.get()
+            cable.put_grant(grant['ONU'],grant)
+
+    def OLT_receiver(self,cable):
+        """A process which receives a request message from the ONUs."""
+        while True:
+            request = yield cable.get_request()#get a request message
+            print("Received Request from {} at {:.4f}".format(request['ONU'].oid, self.env.now))
+            self.env.process(self.DBA_IPACT(request['ONU'],request['buffer_size']))
+
+
+#starts the simulator
+random.seed(RANDOM_SEED)
+env = simpy.Environment()
+cable = Cable(env, 10)
+ONU_List = []
+for i in range(NUMBER_OF_ONUs):
+    #distance = random.randint(19,DISTANCE)
+    distance= DISTANCE
+    exp=464#arbitrary value for the exponential distribution
+    ONU_List.append(ONU(distance,i,env,cable,exp,ONU_QUEUE_LIMIT,PKT_SIZE,MAX_BUCKET_SIZE))
+
+olt = OLT(env,cable,MAX_GRANT_SIZE)
+env.run(until=SIM_DURATION)
