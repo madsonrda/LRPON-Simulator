@@ -37,7 +37,9 @@ PKT_SIZE = 9000
 #logging
 logging.basicConfig(filename='g-sim.log',level=logging.DEBUG,format='%(asctime)s %(message)s')
 delay_file = open("delay.csv","w")
-
+delay_file.write("ONU_id,delay\n")
+grant_time_file = open("grant_time.csv","w")
+grant_time_file.write("ONU_id,start,end\n")
 
 class Cable(object):
     """This class represents the propagation through a cable and the splitter."""
@@ -327,10 +329,10 @@ class OLT(object):
             sending_time = 	bits/float(1000000000)
             grant_time = delay + sending_time + self.guard_interval
             grant_final_time = self.env.now + grant_time
-
-
+            grant_time_file.write( "{},{},{}\n".format(ONU.oid,self.env.now,grant_final_time) )
             grant = {'ONU':ONU,'grant_size': buffer_size, 'grant_final_time': grant_final_time, 'prediction': None}
             self.grant_store.put(grant)
+
             yield self.env.timeout(grant_time)
 
     def OLT_sender(self,cable):
@@ -355,10 +357,11 @@ ONU_List = []
 for i in range(NUMBER_OF_ONUs):
     #distance = random.randint(19,DISTANCE)
     distance= DISTANCE
-    exp=464#arbitrary value for the exponential distribution
+    exp=116#arbitrary value for the exponential distribution
     ONU_List.append(ONU(distance,i,env,cable,exp,ONU_QUEUE_LIMIT,PKT_SIZE,MAX_BUCKET_SIZE))
 
 olt = OLT(env,cable,MAX_GRANT_SIZE)
 logging.info("starting simulator")
 env.run(until=SIM_DURATION)
 delay_file.close()
+grant_time_file.close()
