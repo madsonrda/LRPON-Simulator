@@ -17,7 +17,7 @@ group = parser.add_mutually_exclusive_group()
 group.add_argument("-q", "--quiet", action="store_true")
 parser.add_argument("N", type=int, default=3, help="the number of ONUs")
 parser.add_argument("B", type=int, default=0, nargs='?', help="the size of the ONU sender bucket in bytes")
-parser.add_argument("Q", type=int, default=0, nargs='?',help="the size of the ONU port queue in bytes")
+parser.add_argument("Q", type=int, default=None, nargs='?',help="the size of the ONU port queue in bytes")
 parser.add_argument("M", type=float, default=0, nargs='?', help="The maximum size of buffer which a grant can allow")
 parser.add_argument("D", type=int, default=100, nargs='?', help="Distance in km from ONU to OLT")
 args = parser.parse_args()
@@ -36,6 +36,8 @@ PKT_SIZE = 9000
 
 #logging
 logging.basicConfig(filename='g-sim.log',level=logging.DEBUG,format='%(asctime)s %(message)s')
+delay_file = open("delay.csv","w")
+
 
 class Cable(object):
     """This class represents the propagation through a cable and the splitter."""
@@ -85,12 +87,12 @@ class Packet(object):
             format(self.id, self.src, self.time, self.size)
 
 class PacketGenerator(object):
-    def __init__(self, env, id,  adist, sdist, initial_delay=0, finish=float("inf"), flow_id=0, fix_pkt_size=None):
+    def __init__(self, env, id,  adist, sdist, fix_pkt_size=None, finish=float("inf"), flow_id=0):
         self.id = id
         self.env = env
         self.arrivals_dist = adist #packet arrivals distribution
         self.size_dist = sdist #packet size distribution
-        self.initial_delay = initial_delay
+
         self.fix_pkt_size = fix_pkt_size
         self.finish = finish
         self.out = None
@@ -99,11 +101,12 @@ class PacketGenerator(object):
         self.flow_id = flow_id
 
 
+
     def run(self):
         """The generator function used in simulations.
         """
 
-        yield self.env.timeout(self.initial_delay)
+
         while self.env.now < self.finish:
             # wait for next transmission
             yield self.env.timeout(self.arrivals_dist())
@@ -119,7 +122,7 @@ class PacketGenerator(object):
 class ONUPort(object):
 
 
-    def __init__(self, env, rate, qlimit=None):
+    def __init__(self, env, qlimit=None):
         self.store = simpy.Store(env)#buffer
         self.grant_size = 0
         self.grant_final_time = 0
@@ -137,6 +140,8 @@ class ONUPort(object):
         self.grant_loop = False
 
 
+
+
     def set_grant(self,grant): #setting grant byte size and its ending
         self.grant_size = grant['grant_size']
         self.grant_final_time = grant['grant_final_time']
@@ -148,15 +153,21 @@ class ONUPort(object):
         return self.last_buffer_size
 
     def get_pkt(self):
+
         try:
+
             pkt = (yield self.store.get() )#getting a packet from the buffer
+
+
             self.pkt = pkt
+
         except simpy.Interrupt as i:
             logging.debug("Error while getting a packet from the buffer ({})".format(i))
 
             pass
 
         if not self.grant_loop:#put the pkt back to the buffer if the grant time expired
+
             self.store.put(pkt)
 
 
@@ -174,8 +185,10 @@ class ONUPort(object):
                 break
             if self.pkt is not None:
                 pkt = self.pkt
+
             else:
                 #there is not packate to be sent
+
                 break
             self.busy = 1
             self.byte_size -= pkt.size
@@ -193,10 +206,13 @@ class ONUPort(object):
 
                 self.store.put(pkt)
                 break
+
             yield self.env.timeout(sending_time)
 
+            delay_file.write( "{},{}\n".format( ONU_id, (self.env.now - pkt.time) ) )
+
             self.pkt = None
-        self.grant_loop = False #ending of the grant
+        self.grant_loop = False #sending of the grant
 
 
 
@@ -209,9 +225,9 @@ class ONUPort(object):
         """receives a packet from the packet genarator and put it on the queue
             if the queue is not full, otherwise drop it.
         """
+
         self.packets_rec += 1
         tmp = self.byte_size + pkt.size
-
         if self.qlimit is None: #checks if the queue size is unlimited
             self.byte_size = tmp
             return self.store.put(pkt)
@@ -232,17 +248,17 @@ class ONU(object):
         self.excess = 0 #difference between the size of the request and the grant
         arrivals_dist = functools.partial(random.expovariate, exp) #packet arrival distribuition
         size_dist = functools.partial(random.expovariate, 0.01)  # packet size distribuition, mean size 100 bytes
-        port_rate = 1000.0 #para que serve?
         self.pg = PacketGenerator(self.env, "bbmp", arrivals_dist, size_dist,fix_pkt_size) #creates the packet generator
-        if qlimit ==0:# checks if the queue has a size limit
+        if qlimit == 0:# checks if the queue has a size limit
             queue_limit = None
         else:
             queue_limit = qlimit
-        self.port = ONUPort(self.env, port_rate, qlimit=queue_limit)#create ONU PORT
+        self.port = ONUPort(self.env, qlimit=queue_limit)#create ONU PORT
         self.pg.out = self.port #forward packet generator output to ONU port
         self.sender = self.env.process(self.ONU_sender(cable))
         self.receiver = self.env.process(self.ONU_receiver(cable))
         self.bucket = bucket #Bucket size
+
 
     def ONU_receiver(self,cable):
         while True:
@@ -327,7 +343,7 @@ class OLT(object):
         """A process which receives a request message from the ONUs."""
         while True:
             request = yield cable.get_request()#get a request message
-            print("Received Request from {} at {:.4f}".format(request['ONU'].oid, self.env.now))
+            print("Received Request from ONU {} at {}".format(request['ONU'].oid, self.env.now))
             self.env.process(self.DBA_IPACT(request['ONU'],request['buffer_size']))
 
 
@@ -343,4 +359,6 @@ for i in range(NUMBER_OF_ONUs):
     ONU_List.append(ONU(distance,i,env,cable,exp,ONU_QUEUE_LIMIT,PKT_SIZE,MAX_BUCKET_SIZE))
 
 olt = OLT(env,cable,MAX_GRANT_SIZE)
+logging.info("starting simulator")
 env.run(until=SIM_DURATION)
+delay_file.close()
