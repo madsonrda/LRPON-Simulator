@@ -273,7 +273,7 @@ class ONU(object):
             yield sent_pkt
 
             if grant['prediction']:#check if have any predicion in the grant
-                for pred in grant_prediction[1:]:
+                for pred in grant['prediction'][1:]:
                     pred_grant = {'grant_size': grant['grant_size'], 'grant_final_time': pred[1]}
 
                     try:
@@ -332,6 +332,48 @@ class DBA_IPACT(DBA):
             grant_final_time = self.env.now + grant_time
             grant_time_file.write( "{},{},{}\n".format(ONU.oid,self.env.now,grant_final_time) )
             grant = {'ONU':ONU,'grant_size': buffer_size, 'grant_final_time': grant_final_time, 'prediction': None}
+            self.grant_store.put(grant)
+
+            yield self.env.timeout(grant_time)
+
+class DBA_IPACT_PRED(DBA):
+    def __init__(self,env,max_grant_size,grant_store):
+        DBA.__init__(self,env,max_grant_size,grant_store)
+        self.counter = simpy.Resource(self.env, capacity=1)#create a queue of requests to DBA
+        self.PREDICTIONS_R = {}
+        for i in range(NUMBER_OF_ONUs):
+            self.PREDICTIONS_R[i] = []
+        file_pred = open("grant.pred",'r')
+        allpred = file_pred.read()
+        file_pred.close()
+        allpred = allpred.split()
+        for pred in allpred:
+            splitpred = pred.split(',')
+            self.PREDICTIONS_R[int(splitpred[0])].append([float(splitpred[1]),float(splitpred[2])])
+
+
+    def ipact_pred_file(self,ONU,buffer_size):
+        with self.counter.request() as my_turn:
+            yield my_turn
+
+            delay = ONU.delay
+
+            if self.max_grant_size > 0 and buffer_size > self.max_grant_size:
+                buffer_size = self.max_grant_size
+            bits = buffer_size * 8
+            sending_time = 	bits/float(1000000000)
+            grant_time = delay + sending_time + self.guard_interval
+            grant_final_time = self.env.now + grant_time
+
+            #PREDICTIONS
+            if len(self.PREDICTIONS_R[ONU.oid]) > 0:
+                prediction = self.PREDICTIONS_R[ONU.oid]
+                self.PREDICTIONS_R[ONU.oid] = []
+            else:
+                prediction = None
+
+            #grant_time_file.write( "{},{},{}\n".format(ONU.oid,self.env.now,grant_final_time) )
+            grant = {'ONU':ONU,'grant_size': buffer_size, 'grant_final_time': grant_final_time, 'prediction': prediction}
             self.grant_store.put(grant)
 
             yield self.env.timeout(grant_time)
