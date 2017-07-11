@@ -3,7 +3,7 @@ import pandas as pd
 import statsmodels.api as sm
 import matplotlib.pyplot as plt
 
-predction_file = open("grant.pred","w")
+prediction_file = open("grant.pred","w")
 
 l= []
 
@@ -51,7 +51,7 @@ def grant_predictor(onu_id,onu_df,window=20,predict=5):
         #writing
         if len(start_pred) == len(end_pred):
             for i in range(len(start_pred)):
-                predction_file.write("{},{},{}\n".format(onu_id,start_pred[i],end_pred[i]))
+                prediction_file.write("{},{},{}\n".format(onu_id,start_pred[i],end_pred[i]))
                 l.append( [ start_pred[i], end_pred[i] ] )
         else:
             print("ERROR")
@@ -63,6 +63,6 @@ def grant_predictor(onu_id,onu_df,window=20,predict=5):
 for onu in data['ONU_id'].unique():
     onu_df = data[ data['ONU_id'] == onu ][ ['start','end'] ]
     grant_predictor(onu,onu_df)
-
+prediction_file.close()
 l.sort()
 overlap(l)

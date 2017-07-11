@@ -305,19 +305,20 @@ class ONU(object):
             else:
                 yield self.env.timeout(self.delay)
 
-class OLT(object):
-    def __init__(self,env,cable,max_grant_size):
+class DBA(object):
+    def __init__(self,env,max_grant_size,grant_store):
         self.env = env
-        self.guard_interval = 0.000001
-        self.grant_store = simpy.Store(self.env)
-        self.counter = simpy.Resource(self.env, capacity=1)#create a queue of requests to DBA
-        self.receiver = self.env.process(self.OLT_receiver(cable))#
-        self.sender = self.env.process(self.OLT_sender(cable))#
         self.max_grant_size = max_grant_size
+        self.grant_store = grant_store
+        self.guard_interval = 0.000001
+
+class DBA_IPACT(DBA):
+    def __init__(self,env,max_grant_size,grant_store):
+        DBA.__init__(self,env,max_grant_size,grant_store)
+        self.counter = simpy.Resource(self.env, capacity=1)#create a queue of requests to DBA
 
 
-
-    def DBA_IPACT(self,ONU,buffer_size):
+    def ipact(self,ONU,buffer_size):
         with self.counter.request() as my_turn:
             yield my_turn
 
@@ -335,6 +336,16 @@ class OLT(object):
 
             yield self.env.timeout(grant_time)
 
+
+
+class OLT(object):
+    def __init__(self,env,cable,max_grant_size):
+        self.env = env
+        self.grant_store = simpy.Store(self.env)
+        self.dba = DBA_IPACT(self.env, max_grant_size, self.grant_store)
+        self.receiver = self.env.process(self.OLT_receiver(cable))#
+        self.sender = self.env.process(self.OLT_sender(cable))#
+
     def OLT_sender(self,cable):
         """A process which sends a grant message to ONU"""
         while True:
@@ -346,7 +357,7 @@ class OLT(object):
         while True:
             request = yield cable.get_request()#get a request message
             print("Received Request from ONU {} at {}".format(request['ONU'].oid, self.env.now))
-            self.env.process(self.DBA_IPACT(request['ONU'],request['buffer_size']))
+            self.env.process(self.dba.ipact(request['ONU'],request['buffer_size']))
 
 
 #starts the simulator
