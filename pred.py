@@ -24,6 +24,21 @@ def overlap(l):
         #     break
     print("n overlap: {}".format(o))
 
+def remove_overlap(l):
+    j = 1
+    for interval1 in l[:-1]:
+        for interval2 in l[j:]:
+            if interval1[1] > interval2[0]:
+                if interval1 in l:
+                    index1 = l.index(interval1)
+                    new_interval = [ interval1[0] , interval2[0] - 0.000001 ]
+                    l[index1] = new_interval
+
+            else:
+                break
+        j+=1
+    return l
+
 
 def grant_predictor(onu_id,onu_df,window=20,predict=5):
     index=0
@@ -64,5 +79,7 @@ for onu in data['ONU_id'].unique():
     onu_df = data[ data['ONU_id'] == onu ][ ['start','end'] ]
     grant_predictor(onu,onu_df)
 prediction_file.close()
-l.sort()
-overlap(l)
+# l.sort()
+# l = remove_overlap(l)
+# overlap(l)
+# print set([x for x in l if l.count(x) > 1])

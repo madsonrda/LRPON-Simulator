@@ -358,19 +358,30 @@ class DBA_IPACT_PRED(DBA):
 
 
     def predictions_schedule(self,predictions):
-        o=0
+        self.predictions_schedule_list +=  predictions
+        self.predictions_schedule_list.sort()
         j = 1
-        for interval in self.predictions_schedule_list:
-            for pred in predictions:
-                if interval[1] > pred[0]:
-                    o+=1
+        for interval1 in self.predictions_schedule_list[:-1]:
+            for interval2 in self.predictions_schedule_list[j:]:
+                if interval1[1] > interval2[0]:
+                    if interval1 in predictions:
+                        index1 = self.predictions_schedule_list.index(interval1)
+                        index2 = predictions.index(interval1)
+                        new_interval = [ interval1[0] , interval2[0] - self.guard_interval ]
+                        predictions[ index2 ] = new_interval
+                        self.predictions_schedule_list[index1] = new_interval
+
+                    else:
+                        index1 = self.predictions_schedule_list.index(interval2)
+                        index2 = predictions.index(interval2)
+                        new_interval = [ interval1[1] + self.guard_interval, interval2[1] ]
+                        predictions[ index2 ] = new_interval
+                        self.predictions_schedule_list[index1] = new_interval
+
                     #print("overlap:{}-{}".format(interval,i))
                 else:
                     break
             j+=1
-
-        self.predictions_schedule_list +=  predictions
-        self.predictions_schedule_list.sort()
 
 
 
@@ -406,7 +417,7 @@ class OLT(object):
     def __init__(self,env,cable,max_grant_size):
         self.env = env
         self.grant_store = simpy.Store(self.env)
-        self.dba = DBA_IPACT_PRED(self.env, max_grant_size, self.grant_store)
+        self.dba = DBA_IPACT(self.env, max_grant_size, self.grant_store)
         self.receiver = self.env.process(self.OLT_receiver(cable))#
         self.sender = self.env.process(self.OLT_sender(cable))#
 
@@ -421,7 +432,7 @@ class OLT(object):
         while True:
             request = yield cable.get_request()#get a request message
             print("Received Request from ONU {} at {}".format(request['ONU'].oid, self.env.now))
-            self.env.process(self.dba.ipact_pred_file(request['ONU'],request['buffer_size']))
+            self.env.process(self.dba.ipact(request['ONU'],request['buffer_size']))
 
 
 #starts the simulator
