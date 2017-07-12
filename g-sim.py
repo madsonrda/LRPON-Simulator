@@ -340,9 +340,14 @@ class DBA_IPACT_PRED(DBA):
     def __init__(self,env,max_grant_size,grant_store):
         DBA.__init__(self,env,max_grant_size,grant_store)
         self.counter = simpy.Resource(self.env, capacity=1)#create a queue of requests to DBA
+        self.predictions_schedule_list = []
         self.PREDICTIONS_R = {}
         for i in range(NUMBER_OF_ONUs):
             self.PREDICTIONS_R[i] = []
+        self.predictor_file()
+
+
+    def predictor_file(self):
         file_pred = open("grant.pred",'r')
         allpred = file_pred.read()
         file_pred.close()
@@ -350,6 +355,23 @@ class DBA_IPACT_PRED(DBA):
         for pred in allpred:
             splitpred = pred.split(',')
             self.PREDICTIONS_R[int(splitpred[0])].append([float(splitpred[1]),float(splitpred[2])])
+
+
+    def predictions_schedule(self,predictions):
+        o=0
+        j = 1
+        for interval in self.predictions_schedule_list:
+            for pred in predictions:
+                if interval[1] > pred[0]:
+                    o+=1
+                    #print("overlap:{}-{}".format(interval,i))
+                else:
+                    break
+            j+=1
+
+        self.predictions_schedule_list +=  predictions
+        self.predictions_schedule_list.sort()
+
 
 
     def ipact_pred_file(self,ONU,buffer_size):
@@ -384,7 +406,7 @@ class OLT(object):
     def __init__(self,env,cable,max_grant_size):
         self.env = env
         self.grant_store = simpy.Store(self.env)
-        self.dba = DBA_IPACT(self.env, max_grant_size, self.grant_store)
+        self.dba = DBA_IPACT_PRED(self.env, max_grant_size, self.grant_store)
         self.receiver = self.env.process(self.OLT_receiver(cable))#
         self.sender = self.env.process(self.OLT_sender(cable))#
 
@@ -399,7 +421,7 @@ class OLT(object):
         while True:
             request = yield cable.get_request()#get a request message
             print("Received Request from ONU {} at {}".format(request['ONU'].oid, self.env.now))
-            self.env.process(self.dba.ipact(request['ONU'],request['buffer_size']))
+            self.env.process(self.dba.ipact_pred_file(request['ONU'],request['buffer_size']))
 
 
 #starts the simulator
