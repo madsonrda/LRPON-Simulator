@@ -2,8 +2,8 @@
 
 Dependencies:
 
-pip install simpy
+pip install simpy, numpy, pandas, matplotlib, statsmodels
 
 
 Run:
-python LRPON-Simulator.py 'SEED' 'NUMBER_OF_THREADS' 'MIN_BUFFER' 'MAX_BUFFER'
+python g-sim.py -h
