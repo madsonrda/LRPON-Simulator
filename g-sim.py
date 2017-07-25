@@ -40,6 +40,8 @@ delay_file = open("delay.csv","w")
 delay_file.write("ONU_id,delay\n")
 grant_time_file = open("grant_time.csv","w")
 grant_time_file.write("ONU_id,start,end\n")
+pkt_file = open("pkt.csv","w")
+pkt_file.write("size\n")
 
 class Cable(object):
     """This class represents the propagation through a cable and the splitter."""
@@ -114,8 +116,10 @@ class PacketGenerator(object):
             yield self.env.timeout(self.arrivals_dist())
             self.packets_sent += 1
 
+
             if self.fix_pkt_size:
                 p = Packet(self.env.now, self.fix_pkt_size, self.packets_sent, src=self.id, flow_id=self.flow_id)
+                pkt_file.write("{}\n".format(self.fix_pkt_size))
             else:
                 p = Packet(self.env.now, self.size_dist(), self.packets_sent, src=self.id, flow_id=self.flow_id)
 
@@ -451,3 +455,4 @@ logging.info("starting simulator")
 env.run(until=SIM_DURATION)
 delay_file.close()
 grant_time_file.close()
+pkt_file.close()
