@@ -43,7 +43,7 @@ grant_time_file.write("ONU_id,start,end\n")
 
 class Cable(object):
     """This class represents the propagation through a cable and the splitter."""
-    def __init__(self, env, delay):
+    def __init__(self, env):
         self.env = env
         self.upstream = simpy.Store(env)
         self.downstream = []
@@ -405,7 +405,7 @@ class OLT(object):
 #starts the simulator
 random.seed(RANDOM_SEED)
 env = simpy.Environment()
-cable = Cable(env, 10)
+cable = Cable(env)
 ONU_List = []
 for i in range(NUMBER_OF_ONUs):
     #distance = random.randint(19,DISTANCE)
