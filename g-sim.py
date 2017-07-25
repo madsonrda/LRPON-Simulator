@@ -340,9 +340,14 @@ class DBA_IPACT_PRED(DBA):
     def __init__(self,env,max_grant_size,grant_store):
         DBA.__init__(self,env,max_grant_size,grant_store)
         self.counter = simpy.Resource(self.env, capacity=1)#create a queue of requests to DBA
+        self.predictions_schedule_list = []
         self.PREDICTIONS_R = {}
         for i in range(NUMBER_OF_ONUs):
             self.PREDICTIONS_R[i] = []
+        self.predictor_file()
+
+
+    def predictor_file(self):
         file_pred = open("grant.pred",'r')
         allpred = file_pred.read()
         file_pred.close()
@@ -350,6 +355,34 @@ class DBA_IPACT_PRED(DBA):
         for pred in allpred:
             splitpred = pred.split(',')
             self.PREDICTIONS_R[int(splitpred[0])].append([float(splitpred[1]),float(splitpred[2])])
+
+
+    def predictions_schedule(self,predictions):
+        self.predictions_schedule_list +=  predictions
+        self.predictions_schedule_list.sort()
+        j = 1
+        for interval1 in self.predictions_schedule_list[:-1]:
+            for interval2 in self.predictions_schedule_list[j:]:
+                if interval1[1] > interval2[0]:
+                    if interval1 in predictions:
+                        index1 = self.predictions_schedule_list.index(interval1)
+                        index2 = predictions.index(interval1)
+                        new_interval = [ interval1[0] , interval2[0] - self.guard_interval ]
+                        predictions[ index2 ] = new_interval
+                        self.predictions_schedule_list[index1] = new_interval
+
+                    else:
+                        index1 = self.predictions_schedule_list.index(interval2)
+                        index2 = predictions.index(interval2)
+                        new_interval = [ interval1[1] + self.guard_interval, interval2[1] ]
+                        predictions[ index2 ] = new_interval
+                        self.predictions_schedule_list[index1] = new_interval
+
+                    #print("overlap:{}-{}".format(interval,i))
+                else:
+                    break
+            j+=1
+
 
 
     def ipact_pred_file(self,ONU,buffer_size):
