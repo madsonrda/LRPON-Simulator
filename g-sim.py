@@ -345,10 +345,15 @@ class DBA_IPACT_PRED(DBA):
         DBA.__init__(self,env,max_grant_size,grant_store)
         self.counter = simpy.Resource(self.env, capacity=1)#create a queue of requests to DBA
         self.predictions_schedule_list = []
-        self.PREDICTIONS_R = {}
+        self.grant_history = range(NUMBER_OF_ONUs)
+        self.PREDICTION_FILE = {}
         for i in range(NUMBER_OF_ONUs):
-            self.PREDICTIONS_R[i] = []
+            self.PREDICTION_FILE[i] = []
+            self.grant_history[i] = {'counter': [], 'start': [], 'end': []}
         self.predictor_file()
+
+    def predictor_online(self, ONU_id):
+        pass
 
 
     def predictor_file(self):
@@ -358,7 +363,7 @@ class DBA_IPACT_PRED(DBA):
         allpred = allpred.split()
         for pred in allpred:
             splitpred = pred.split(',')
-            self.PREDICTIONS_R[int(splitpred[0])].append([float(splitpred[1]),float(splitpred[2])])
+            self.PREDICTION_FILE[int(splitpred[0])].append([float(splitpred[1]),float(splitpred[2])])
 
 
     def predictions_schedule(self,predictions):
@@ -387,6 +392,31 @@ class DBA_IPACT_PRED(DBA):
                     break
             j+=1
 
+    def PD_DBA(self,ONU,buffer_size):
+        with self.counter.request() as my_turn:
+            yield my_turn
+
+            delay = ONU.delay
+
+            if self.max_grant_size > 0 and buffer_size > self.max_grant_size:
+                buffer_size = self.max_grant_size
+            bits = buffer_size * 8
+            sending_time = 	bits/float(1000000000)
+            grant_time = delay + sending_time + self.guard_interval
+            grant_final_time = self.env.now + grant_time
+
+            self.grant_history[ONU.id]['start'].append(self.env.now)
+            self.grant_history[ONU.id]['end'].append(grant_final_time)
+            self.grant_history[ONU.id]['counter'].append( len( self.grant_history[ONU.id]['start'] ) )
+
+            #PREDICTIONS
+            prediction = predictor_online(ONU.id)
+
+            #grant_time_file.write( "{},{},{}\n".format(ONU.oid,self.env.now,grant_final_time) )
+            grant = {'ONU':ONU,'grant_size': buffer_size, 'grant_final_time': grant_final_time, 'prediction': prediction}
+            self.grant_store.put(grant)
+
+            yield self.env.timeout(grant_time)
 
 
     def ipact_pred_file(self,ONU,buffer_size):
@@ -403,9 +433,9 @@ class DBA_IPACT_PRED(DBA):
             grant_final_time = self.env.now + grant_time
 
             #PREDICTIONS
-            if len(self.PREDICTIONS_R[ONU.oid]) > 0:
-                prediction = self.PREDICTIONS_R[ONU.oid]
-                self.PREDICTIONS_R[ONU.oid] = []
+            if len(self.PREDICTION_FILE[ONU.oid]) > 0:
+                prediction = self.PREDICTION_FILE[ONU.oid]
+                self.PREDICTION_FILE[ONU.oid] = []
             else:
                 prediction = None
 
