@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import sys
 import argparse
 import logging
+from sklearn import linear_model
 
 
 #Parsing the inputs arguments
@@ -33,13 +34,15 @@ ONU_QUEUE_LIMIT = args.Q
 SIM_DURATION = 30
 RANDOM_SEED = 20
 PKT_SIZE = 9000
+MAC_TABLE = {}
+Grant_ONU_counter = {}
 
 #logging
 logging.basicConfig(filename='g-sim.log',level=logging.DEBUG,format='%(asctime)s %(message)s')
 delay_file = open("delay.csv","w")
 delay_file.write("ONU_id,delay\n")
 grant_time_file = open("grant_time.csv","w")
-grant_time_file.write("ONU_id,start,end\n")
+grant_time_file.write("source address,destination address,opcode,timestamp,counter,ONU_id,start,end\n")
 pkt_file = open("pkt.csv","w")
 pkt_file.write("size\n")
 
@@ -121,8 +124,9 @@ class PacketGenerator(object):
                 p = Packet(self.env.now, self.fix_pkt_size, self.packets_sent, src=self.id, flow_id=self.flow_id)
                 pkt_file.write("{}\n".format(self.fix_pkt_size))
             else:
-                p = Packet(self.env.now, self.size_dist(), self.packets_sent, src=self.id, flow_id=self.flow_id)
-
+                size = self.size_dist()
+                p = Packet(self.env.now, size, self.packets_sent, src=self.id, flow_id=self.flow_id)
+                pkt_file.write("{}\n".format(size))
             self.out.put(p)
 
 class ONUPort(object):
@@ -253,8 +257,8 @@ class ONU(object):
         self.delay = self.distance/ float(210000) # fiber propagation delay
         self.excess = 0 #difference between the size of the request and the grant
         arrivals_dist = functools.partial(random.expovariate, exp) #packet arrival distribuition
-        size_dist = functools.partial(random.expovariate, 0.01)  # packet size distribuition, mean size 100 bytes
-        self.pg = PacketGenerator(self.env, "bbmp", arrivals_dist, size_dist,fix_pkt_size) #creates the packet generator
+        size_dist = functools.partial(random.expovariate, 0.1)  # packet size distribuition, mean size 100 bytes
+        self.pg = PacketGenerator(self.env, "bbmp", arrivals_dist, size_dist) #creates the packet generator
         if qlimit == 0:# checks if the queue has a size limit
             queue_limit = None
         else:
@@ -325,7 +329,7 @@ class DBA_IPACT(DBA):
     def ipact(self,ONU,buffer_size):
         with self.counter.request() as my_turn:
             yield my_turn
-
+            time_stamp = self.env.now
             delay = ONU.delay
 
             if self.max_grant_size > 0 and buffer_size > self.max_grant_size:
@@ -334,16 +338,20 @@ class DBA_IPACT(DBA):
             sending_time = 	bits/float(1000000000)
             grant_time = delay + sending_time + self.guard_interval
             grant_final_time = self.env.now + grant_time
-            grant_time_file.write( "{},{},{}\n".format(ONU.oid,self.env.now,grant_final_time) )
+            counter = Grant_ONU_counter[ONU.oid]
+            grant_time_file.write( "{},{},{},{},{},{},{},{}\n".format(MAC_TABLE['olt'], MAC_TABLE[ONU.oid],"02", time_stamp,counter, ONU.oid,self.env.now,grant_final_time) )
             grant = {'ONU':ONU,'grant_size': buffer_size, 'grant_final_time': grant_final_time, 'prediction': None}
             self.grant_store.put(grant)
+            Grant_ONU_counter[ONU.oid] += 1
 
             yield self.env.timeout(grant_time)
 
 class DBA_IPACT_PRED(DBA):
-    def __init__(self,env,max_grant_size,grant_store):
+    def __init__(self,env,max_grant_size,grant_store,window=20,predict=5):
         DBA.__init__(self,env,max_grant_size,grant_store)
         self.counter = simpy.Resource(self.env, capacity=1)#create a queue of requests to DBA
+        self.window = window
+        self.predict = predict
         self.predictions_schedule_list = []
         self.grant_history = range(NUMBER_OF_ONUs)
         self.PREDICTION_FILE = {}
@@ -351,20 +359,6 @@ class DBA_IPACT_PRED(DBA):
             self.PREDICTION_FILE[i] = []
             self.grant_history[i] = {'counter': [], 'start': [], 'end': []}
         self.predictor_file()
-
-    def predictor_online(self, ONU_id):
-        pass
-
-
-    def predictor_file(self):
-        file_pred = open("grant.pred",'r')
-        allpred = file_pred.read()
-        file_pred.close()
-        allpred = allpred.split()
-        for pred in allpred:
-            splitpred = pred.split(',')
-            self.PREDICTION_FILE[int(splitpred[0])].append([float(splitpred[1]),float(splitpred[2])])
-
 
     def predictions_schedule(self,predictions):
         self.predictions_schedule_list +=  predictions
@@ -387,16 +381,57 @@ class DBA_IPACT_PRED(DBA):
                         predictions[ index2 ] = new_interval
                         self.predictions_schedule_list[index1] = new_interval
 
-                    #print("overlap:{}-{}".format(interval,i))
+
                 else:
                     break
             j+=1
+        return predictions
 
-    def PD_DBA(self,ONU,buffer_size):
+
+    def predictor_online(self, ONU_id):
+        if len( self.grant_history[ONU_id]['start'] ) >= self.window :
+            df_tmp = pd.DataFrame(self.grant_history)
+            X_pred = np.arange(self.grant_history[ONU_id]['counter'][-1] +1, self.grant_history[ONU_id]['counter'][-1] + 1 + self.predict).reshape(-1,1)
+            #predicting start time
+            reg = linear_model.LinearRegression()
+            reg.fit( np.array( df_tmp['counter'] ).reshape(-1,1) , df_tmp['start'] )
+            start_pred = reg.predict(X_pred)
+            #predicting end time
+            reg = linear_model.LinearRegression()
+            reg.fit( np.array( df_tmp['counter'] ).reshape(-1,1) , df_tmp['end'] )
+            end_pred = reg.predict(X_pred)
+
+            #merging start_pred and end_pred
+            predictions = []
+            for i in range(len(start_pred)):
+                predictions.append( [ start_pred[i], end_pred[i] ] )
+
+            #fixing overlap
+            predictions = predictions_schedule(predictions)
+            return predictions
+        else:
+            return None
+
+
+    def predictor_file(self):
+        file_pred = open("grant.pred",'r')
+        allpred = file_pred.read()
+        file_pred.close()
+        allpred = allpred.split()
+        for pred in allpred:
+            splitpred = pred.split(',')
+            self.PREDICTION_FILE[int(splitpred[0])].append([float(splitpred[1]),float(splitpred[2])])
+
+
+
+
+    def PD_DBA(self,ONU,buffer_size,predictions_report):
         with self.counter.request() as my_turn:
             yield my_turn
-
+            time_stamp = self.env.now
             delay = ONU.delay
+            if predictions_report:
+                self.update_prediction_report(predictions_report)
 
             if self.max_grant_size > 0 and buffer_size > self.max_grant_size:
                 buffer_size = self.max_grant_size
@@ -474,10 +509,15 @@ random.seed(RANDOM_SEED)
 env = simpy.Environment()
 cable = Cable(env)
 ONU_List = []
+
+for i in range(NUMBER_OF_ONUs):
+    MAC_TABLE[i] = "00:00:00:00:{}:{}".format(random.randint(0x00, 0xff),random.randint(0x00, 0xff))
+    Grant_ONU_counter[i] = 0
+MAC_TABLE['olt'] = "ff:ff:ff:ff:00:01"
 for i in range(NUMBER_OF_ONUs):
     #distance = random.randint(19,DISTANCE)
     distance= DISTANCE
-    exp=116#arbitrary value for the exponential distribution
+    exp=116*10#arbitrary value for the exponential distribution
     ONU_List.append(ONU(distance,i,env,cable,exp,ONU_QUEUE_LIMIT,PKT_SIZE,MAX_BUCKET_SIZE))
 
 olt = OLT(env,cable,MAX_GRANT_SIZE)
