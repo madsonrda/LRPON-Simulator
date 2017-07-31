@@ -230,8 +230,8 @@ class ONUPort(object):
             self.pkt = None
         #ending of the grant
         self.grant_loop = False
-        if start_pkt_usage:
-            self.grant_real_usage.put( [start_pkt_usage , start_pkt_usage + current_grant_usage] )
+        if start_grant_usage:
+            self.grant_real_usage.put( [start_grant_usage , start_grant_usage + current_grant_usage] )
         else:
             self.grant_real_usage.put([])
 
@@ -270,7 +270,7 @@ class ONU(object):
         self.excess = 0 #difference between the size of the request and the grant
         arrivals_dist = functools.partial(random.expovariate, exp) #packet arrival distribuition
         size_dist = functools.partial(random.expovariate, 0.1)  # packet size distribuition, mean size 100 bytes
-        self.pg = PacketGenerator(self.env, "bbmp", arrivals_dist, size_dist) #creates the packet generator
+        self.pg = PacketGenerator(self.env, "bbmp", arrivals_dist, size_dist,fix_pkt_size) #creates the packet generator
         if qlimit == 0:# checks if the queue has a size limit
             queue_limit = None
         else:
@@ -292,7 +292,7 @@ class ONU(object):
 
             sent_pkt = self.env.process(self.port.sent(self.oid))
             yield sent_pkt
-            grant_usage yield self.port.grant_real_usage.get()
+            grant_usage = yield self.port.grant_real_usage.get()
             if len(grant_usage) == 0:
                 logging.debug("Erro in grant_usage")
 
@@ -311,7 +311,7 @@ class ONU(object):
                     sent_pkt = self.env.process(self.port.sent(self.oid))#sending predicted messages
 
                     yield sent_pkt
-                    grant_usage yield self.port.grant_real_usage.get()
+                    grant_usage = yield self.port.grant_real_usage.get()
                     if len(grant_usage) > 0:
                         pred_grant_usage_report.append(grant_usage)
                     else:
