@@ -133,7 +133,8 @@ class ONUPort(object):
 
 
     def __init__(self, env, qlimit=None):
-        self.store = simpy.Store(env)#buffer
+        self.buffer = simpy.Store(env)#buffer
+        self.grant_real_usage = simpy.Store(env)
         self.grant_size = 0
         self.grant_final_time = 0
         self.guard_interval = 0.000001
@@ -166,7 +167,7 @@ class ONUPort(object):
 
         try:
 
-            pkt = (yield self.store.get() )#getting a packet from the buffer
+            pkt = (yield self.buffer.get() )#getting a packet from the buffer
 
 
             self.pkt = pkt
@@ -178,12 +179,14 @@ class ONUPort(object):
 
         if not self.grant_loop:#put the pkt back to the buffer if the grant time expired
 
-            self.store.put(pkt)
+            self.buffer.put(pkt)
 
 
 
     def sent(self,ONU_id):
         self.grant_loop = True
+        start_grant_usage = None
+        current_grant_usage = 0
         while self.grant_final_time > self.env.now:
 
             get_pkt = self.env.process(self.get_pkt())#trying to get a package in the buffer
@@ -195,17 +198,19 @@ class ONUPort(object):
                 break
             if self.pkt is not None:
                 pkt = self.pkt
+                if not start_grant_usage:
+                    start_grant_usage = self.env.now
+                start_pkt_usage = self.env.now
 
             else:
                 #there is not packate to be sent
-
                 break
             self.busy = 1
             self.byte_size -= pkt.size
             if self.byte_size < 0:#Prevent the buffer from being negative
 
                 self.byte_size += pkt.size
-                self.store.put(pkt)
+                self.buffer.put(pkt)
                 break
 
             bits = pkt.size * 8
@@ -214,15 +219,21 @@ class ONUPort(object):
             if env.now + sending_time > self.grant_final_time + self.guard_interval:
                 self.byte_size += pkt.size
 
-                self.store.put(pkt)
+                self.buffer.put(pkt)
                 break
 
-            yield self.env.timeout(sending_time)
-
             delay_file.write( "{},{}\n".format( ONU_id, (self.env.now - pkt.time) ) )
+            yield self.env.timeout(sending_time)
+            end_pkt_usage = self.env.now
+            current_grant_usage += end_pkt_usage - start_pkt_usage
 
             self.pkt = None
-        self.grant_loop = False #sending of the grant
+        #ending of the grant
+        self.grant_loop = False
+        if start_pkt_usage:
+            self.grant_real_usage.put( [start_pkt_usage , start_pkt_usage + current_grant_usage] )
+        else:
+            self.grant_real_usage.put([])
 
 
 
@@ -240,18 +251,19 @@ class ONUPort(object):
         tmp = self.byte_size + pkt.size
         if self.qlimit is None: #checks if the queue size is unlimited
             self.byte_size = tmp
-            return self.store.put(pkt)
+            return self.buffer.put(pkt)
         if tmp >= self.qlimit: # chcks if the queue is full
             self.packets_drop += 1
             #return
         else:
             self.byte_size = tmp
-            self.store.put(pkt)
+            self.buffer.put(pkt)
 
 class ONU(object):
     def __init__(self,distance,oid,env,cable,exp,qlimit,fix_pkt_size,bucket):
         self.env = env
-        self.grant_store = simpy.Store(self.env) #Stores grant_size
+        self.grant_report_store = simpy.Store(self.env) #Stores grant usage report
+        self.grant_report = []
         self.distance = distance #fiber distance
         self.oid = oid #ONU indentifier
         self.delay = self.distance/ float(210000) # fiber propagation delay
@@ -273,12 +285,16 @@ class ONU(object):
     def ONU_receiver(self,cable):
         while True:
             grant = yield cable.get_grant(self.oid)#waiting for a grant
+            pred_grant_usage_report = []
 
             self.excess = self.port.get_last_buffer_size() - grant['grant_size'] #update the excess
             self.port.set_grant(grant)
 
             sent_pkt = self.env.process(self.port.sent(self.oid))
             yield sent_pkt
+            grant_usage yield self.port.grant_real_usage.get()
+            if len(grant_usage) == 0:
+                logging.debug("Erro in grant_usage")
 
             if grant['prediction']:#check if have any predicion in the grant
                 for pred in grant['prediction'][1:]:
@@ -295,9 +311,13 @@ class ONU(object):
                     sent_pkt = self.env.process(self.port.sent(self.oid))#sending predicted messages
 
                     yield sent_pkt
+                    grant_usage yield self.port.grant_real_usage.get()
+                    if len(grant_usage) > 0:
+                        pred_grant_usage_report.append(grant_usage)
+                    else:
+                        logging.debug("Erro in grant_usage")
 
-
-            yield self.grant_store.put("ok")#Signals the end of grant processing
+            yield self.grant_report_store.put(pred_grant_usage_report)#Signals the end of grant processing
 
     def ONU_sender(self, cable):
         """A process which checks the queue size and send a REQUEST message to OLT"""
@@ -309,7 +329,7 @@ class ONU(object):
                 msg = {'text':"ONU %s sent this REQUEST for %.6f at %f" %
                     (self.oid,self.port.byte_size, self.env.now),'buffer_size':requested_buffer,'ONU':self}
                 cable.put_request((msg),self.delay)# put the request message in the cable
-                yield self.grant_store.get()# Wait for the grant processing to send the next request
+                self.grant_report = yield self.grant_report_store.get()# Wait for the grant processing to send the next request
             else:
                 yield self.env.timeout(self.delay)
 
@@ -352,7 +372,7 @@ class DBA_IPACT_PRED(DBA):
         self.counter = simpy.Resource(self.env, capacity=1)#create a queue of requests to DBA
         self.window = window
         self.predict = predict
-        self.predictions_schedule_list = []
+        self.predictions_array = []
         self.grant_history = range(NUMBER_OF_ONUs)
         self.PREDICTION_FILE = {}
         for i in range(NUMBER_OF_ONUs):
@@ -361,25 +381,27 @@ class DBA_IPACT_PRED(DBA):
         self.predictor_file()
 
     def predictions_schedule(self,predictions):
-        self.predictions_schedule_list +=  predictions
-        self.predictions_schedule_list.sort()
+        if len(self.predictions_array) > 0:
+            self.predictions_array = filter(lambda x: x[0] > self.env.now, self.predictions_array)
+        self.predictions_array +=  predictions
+        self.predictions_array.sort()
         j = 1
-        for interval1 in self.predictions_schedule_list[:-1]:
-            for interval2 in self.predictions_schedule_list[j:]:
+        for interval1 in self.predictions_array[:-1]:
+            for interval2 in self.predictions_array[j:]:
                 if interval1[1] > interval2[0]:
                     if interval1 in predictions:
-                        index1 = self.predictions_schedule_list.index(interval1)
+                        index1 = self.predictions_array.index(interval1)
                         index2 = predictions.index(interval1)
                         new_interval = [ interval1[0] , interval2[0] - self.guard_interval ]
                         predictions[ index2 ] = new_interval
-                        self.predictions_schedule_list[index1] = new_interval
+                        self.predictions_array[index1] = new_interval
 
                     else:
-                        index1 = self.predictions_schedule_list.index(interval2)
+                        index1 = self.predictions_array.index(interval2)
                         index2 = predictions.index(interval2)
                         new_interval = [ interval1[1] + self.guard_interval, interval2[1] ]
                         predictions[ index2 ] = new_interval
-                        self.predictions_schedule_list[index1] = new_interval
+                        self.predictions_array[index1] = new_interval
 
 
                 else:
@@ -413,17 +435,6 @@ class DBA_IPACT_PRED(DBA):
             return None
 
 
-    def predictor_file(self):
-        file_pred = open("grant.pred",'r')
-        allpred = file_pred.read()
-        file_pred.close()
-        allpred = allpred.split()
-        for pred in allpred:
-            splitpred = pred.split(',')
-            self.PREDICTION_FILE[int(splitpred[0])].append([float(splitpred[1]),float(splitpred[2])])
-
-
-
 
     def PD_DBA(self,ONU,buffer_size,predictions_report):
         with self.counter.request() as my_turn:
@@ -453,6 +464,15 @@ class DBA_IPACT_PRED(DBA):
 
             yield self.env.timeout(grant_time)
 
+
+    def predictor_file(self):
+        file_pred = open("grant.pred",'r')
+        allpred = file_pred.read()
+        file_pred.close()
+        allpred = allpred.split()
+        for pred in allpred:
+            splitpred = pred.split(',')
+            self.PREDICTION_FILE[int(splitpred[0])].append([float(splitpred[1]),float(splitpred[2])])
 
     def ipact_pred_file(self,ONU,buffer_size):
         with self.counter.request() as my_turn:
