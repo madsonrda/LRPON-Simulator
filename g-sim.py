@@ -10,6 +10,7 @@ import argparse
 import logging
 from sklearn import linear_model
 from sklearn.metrics import r2_score
+import os, errno
 
 #Parsing the inputs arguments
 parser = argparse.ArgumentParser(description="Long Reach PON Simulator")
@@ -17,12 +18,13 @@ group = parser.add_mutually_exclusive_group()
 #group.add_argument("-v", "--verbose", action="store_true")
 group.add_argument("-q", "--quiet", action="store_true")
 parser.add_argument("A", type=str, default='ipact', help="DBA algorithm")
-parser.add_argument("-o", "--onu", type=int, default=3, help="the number of ONUs")
+parser.add_argument("-O", "--onu", type=int, default=3, help="the number of ONUs")
 parser.add_argument("-b", "--bucket", type=int, default=9000, help="the size of the ONU sender bucket in bytes")
 parser.add_argument("-Q", "--qlimit", type=int, default=None ,help="the size of the ONU port queue in bytes")
 parser.add_argument("-m", "--maxgrant", type=float, default=0, help="The maximum size of buffer which a grant can allow")
 parser.add_argument("-d","--distance", type=int, default=100, nargs='?', help="Distance in km from ONU to OLT")
 parser.add_argument("-e","--exponent", type=int, default=116, nargs='?', help="Packet arrivals distribution exponent")
+parser.add_argument("-o", "--output", type=str, help="delay data output file")
 args = parser.parse_args()
 
 #Arguments
@@ -34,6 +36,8 @@ MAX_BUCKET_SIZE = args.bucket
 ONU_QUEUE_LIMIT = args.qlimit
 EXPONENT = args.exponent
 
+
+
 #settings
 SIM_DURATION = 30
 RANDOM_SEED = 20
@@ -41,15 +45,35 @@ PKT_SIZE = 9000
 MAC_TABLE = {}
 Grant_ONU_counter = {}
 
+try:
+    os.makedirs('csv/delay')
+except OSError as e:
+    if e.errno != errno.EEXIST:
+        raise
+
+try:
+    os.makedirs('csv/grant_time')
+except OSError as e:
+    if e.errno != errno.EEXIST:
+        raise
+try:
+    os.makedirs("csv/pkt")
+except OSError as e:
+    if e.errno != errno.EEXIST:
+        raise
+
 #logging
 logging.basicConfig(filename='g-sim.log',level=logging.DEBUG,format='%(asctime)s %(message)s')
-delay_file = open("delay_csv/{}-{}-{}-{}-{}-{}-delay.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,EXPONENT),"w")
+if args.output:
+    delay_file = open("csv/delay/{}.csv".format(args.output),"w")
+else:
+    delay_file = open("csv/delay/{}-{}-{}-{}-{}-{}-delay.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,EXPONENT),"w")
 delay_file.write("ONU_id,delay\n")
-grant_time_file = open("csv/{}-{}-{}-{}-{}-{}-grant_time.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,EXPONENT),"w")
+grant_time_file = open("csv/grant_time/{}-{}-{}-{}-{}-{}-grant_time.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,EXPONENT),"w")
 grant_time_file.write("source address,destination address,opcode,timestamp,counter,ONU_id,start,end\n")
-pkt_file = open("pkt.csv","w")
+pkt_file = open("csv/pkt/pkt.csv","w")
 pkt_file.write("size\n")
-score_file = open("score.csv","w")
+score_file = open("csv/score.csv","w")
 score_file.write("r2_start,r2_end\n")
 
 class Cable(object):
