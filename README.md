@@ -2,7 +2,7 @@
 
 Dependencies:
 
-pip install simpy, numpy, pandas, matplotlib, statsmodels
+pip install simpy, scipy, sklearn, pandas, matplotlib, statsmodels
 
 
 Run:
