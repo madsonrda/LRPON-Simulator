@@ -43,7 +43,7 @@ Grant_ONU_counter = {}
 
 #logging
 logging.basicConfig(filename='g-sim.log',level=logging.DEBUG,format='%(asctime)s %(message)s')
-delay_file = open("csv/{}-{}-{}-{}-{}-{}-delay.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,EXPONENT),"w")
+delay_file = open("delay_csv/{}-{}-{}-{}-{}-{}-delay.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,EXPONENT),"w")
 delay_file.write("ONU_id,delay\n")
 grant_time_file = open("csv/{}-{}-{}-{}-{}-{}-grant_time.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,EXPONENT),"w")
 grant_time_file.write("source address,destination address,opcode,timestamp,counter,ONU_id,start,end\n")
@@ -542,7 +542,7 @@ class OLT(object):
         if dba == "pd_dba":
             self.dba = PD_DBA(self.env, max_grant_size, self.grant_store)
         else:
-            print "IPACT"
+
             self.dba = IPACT(self.env, max_grant_size, self.grant_store)
         self.receiver = self.env.process(self.OLT_receiver(cable))#
         self.sender = self.env.process(self.OLT_sender(cable))#
