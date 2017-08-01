@@ -16,19 +16,23 @@ parser = argparse.ArgumentParser(description="Long Reach PON Simulator")
 group = parser.add_mutually_exclusive_group()
 #group.add_argument("-v", "--verbose", action="store_true")
 group.add_argument("-q", "--quiet", action="store_true")
-parser.add_argument("N", type=int, default=3, help="the number of ONUs")
-parser.add_argument("B", type=int, default=0, nargs='?', help="the size of the ONU sender bucket in bytes")
-parser.add_argument("Q", type=int, default=None, nargs='?',help="the size of the ONU port queue in bytes")
-parser.add_argument("M", type=float, default=0, nargs='?', help="The maximum size of buffer which a grant can allow")
-parser.add_argument("D", type=int, default=100, nargs='?', help="Distance in km from ONU to OLT")
+parser.add_argument("A", type=str, default='ipact', help="DBA algorithm")
+parser.add_argument("-o", "--onu", type=int, default=3, help="the number of ONUs")
+parser.add_argument("-b", "--bucket", type=int, default=9000, help="the size of the ONU sender bucket in bytes")
+parser.add_argument("-Q", "--qlimit", type=int, default=None ,help="the size of the ONU port queue in bytes")
+parser.add_argument("-m", "--maxgrant", type=float, default=0, help="The maximum size of buffer which a grant can allow")
+parser.add_argument("-d","--distance", type=int, default=100, nargs='?', help="Distance in km from ONU to OLT")
+parser.add_argument("-e","--exponent", type=int, default=116, nargs='?', help="Packet arrivals distribution exponent")
 args = parser.parse_args()
 
 #Arguments
-NUMBER_OF_ONUs= args.N
-DISTANCE = args.D
-MAX_GRANT_SIZE = args.M
-MAX_BUCKET_SIZE = args.B
-ONU_QUEUE_LIMIT = args.Q
+DBA_ALGORITHM = args.A
+NUMBER_OF_ONUs= args.onu
+DISTANCE = args.distance
+MAX_GRANT_SIZE = args.maxgrant
+MAX_BUCKET_SIZE = args.bucket
+ONU_QUEUE_LIMIT = args.qlimit
+EXPONENT = args.exponent
 
 #settings
 SIM_DURATION = 30
@@ -39,9 +43,9 @@ Grant_ONU_counter = {}
 
 #logging
 logging.basicConfig(filename='g-sim.log',level=logging.DEBUG,format='%(asctime)s %(message)s')
-delay_file = open("delay.csv","w")
+delay_file = open("csv/{}-{}-{}-{}-{}-{}-delay.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,EXPONENT),"w")
 delay_file.write("ONU_id,delay\n")
-grant_time_file = open("grant_time.csv","w")
+grant_time_file = open("csv/{}-{}-{}-{}-{}-{}-grant_time.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,EXPONENT),"w")
 grant_time_file.write("source address,destination address,opcode,timestamp,counter,ONU_id,start,end\n")
 pkt_file = open("pkt.csv","w")
 pkt_file.write("size\n")
@@ -532,10 +536,14 @@ class PD_DBA(DBA):
 
 
 class OLT(object):
-    def __init__(self,env,cable,max_grant_size):
+    def __init__(self,env,cable,max_grant_size,dba):
         self.env = env
         self.grant_store = simpy.Store(self.env)
-        self.dba = PD_DBA(self.env, max_grant_size, self.grant_store)
+        if dba == "pd_dba":
+            self.dba = PD_DBA(self.env, max_grant_size, self.grant_store)
+        else:
+            print "IPACT"
+            self.dba = IPACT(self.env, max_grant_size, self.grant_store)
         self.receiver = self.env.process(self.OLT_receiver(cable))#
         self.sender = self.env.process(self.OLT_sender(cable))#
 
@@ -566,10 +574,10 @@ MAC_TABLE['olt'] = "ff:ff:ff:ff:00:01"
 for i in range(NUMBER_OF_ONUs):
     #distance = random.randint(19,DISTANCE)
     distance= DISTANCE
-    exp=116*25#arbitrary value for the exponential distribution
-    ONU_List.append(ONU(distance,i,env,cable,exp,ONU_QUEUE_LIMIT,PKT_SIZE,MAX_BUCKET_SIZE))
+    #exp=116*25#arbitrary value for the exponential distribution
+    ONU_List.append(ONU(distance,i,env,cable,EXPONENT,ONU_QUEUE_LIMIT,PKT_SIZE,MAX_BUCKET_SIZE))
 
-olt = OLT(env,cable,MAX_GRANT_SIZE)
+olt = OLT(env,cable,MAX_GRANT_SIZE,DBA_ALGORITHM)
 logging.info("starting simulator")
 env.run(until=SIM_DURATION)
 delay_file.close()
