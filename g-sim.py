@@ -370,7 +370,7 @@ class IPACT(DBA):
                 buffer_size = self.max_grant_size
             bits = buffer_size * 8
             sending_time = 	bits/float(1000000000)
-            grant_time = delay + sending_time + self.guard_interval
+            grant_time = delay + sending_time
             grant_final_time = self.env.now + grant_time
             counter = Grant_ONU_counter[ONU.oid]
             grant_time_file.write( "{},{},{},{},{},{},{},{}\n".format(MAC_TABLE['olt'], MAC_TABLE[ONU.oid],"02", time_stamp,counter, ONU.oid,self.env.now,grant_final_time) )
@@ -379,7 +379,7 @@ class IPACT(DBA):
             Grant_ONU_counter[ONU.oid] += 1
 
 
-            yield self.env.timeout(delay+grant_time)
+            yield self.env.timeout(delay+grant_time + self.guard_interval)
 
 class DBA_PRED_FILE(DBA):
     def __init__(self,env,max_grant_size,grant_store):
@@ -512,7 +512,7 @@ class PD_DBA(DBA):
                 buffer_size = self.max_grant_size
             bits = buffer_size * 8
             sending_time = 	bits/float(1000000000)
-            grant_time = delay + sending_time + self.guard_interval
+            grant_time = delay + sending_time
             grant_final_time = self.env.now + grant_time
 
             self.grant_history[ONU.oid]['start'].append(self.env.now)
@@ -526,7 +526,7 @@ class PD_DBA(DBA):
             #grant_time_file.write( "{},{},{}\n".format(ONU.oid,self.env.now,grant_final_time) )
             grant = {'ONU':ONU,'grant_size': buffer_size, 'grant_final_time': grant_final_time, 'prediction': prediction}
             self.grant_store.put(grant)
-            yield self.env.timeout(grant_time+delay)
+            yield self.env.timeout(grant_time+delay+ self.guard_interval)
 
 
 
@@ -566,7 +566,7 @@ MAC_TABLE['olt'] = "ff:ff:ff:ff:00:01"
 for i in range(NUMBER_OF_ONUs):
     #distance = random.randint(19,DISTANCE)
     distance= DISTANCE
-    exp=116#arbitrary value for the exponential distribution
+    exp=116*25#arbitrary value for the exponential distribution
     ONU_List.append(ONU(distance,i,env,cable,exp,ONU_QUEUE_LIMIT,PKT_SIZE,MAX_BUCKET_SIZE))
 
 olt = OLT(env,cable,MAX_GRANT_SIZE)
