@@ -31,7 +31,7 @@ MAX_BUCKET_SIZE = args.B
 ONU_QUEUE_LIMIT = args.Q
 
 #settings
-SIM_DURATION = 20
+SIM_DURATION = 30
 RANDOM_SEED = 20
 PKT_SIZE = 9000
 MAC_TABLE = {}
@@ -45,6 +45,8 @@ grant_time_file = open("grant_time.csv","w")
 grant_time_file.write("source address,destination address,opcode,timestamp,counter,ONU_id,start,end\n")
 pkt_file = open("pkt.csv","w")
 pkt_file.write("size\n")
+score_file = open("score.csv","w")
+score_file.write("r2_start,r2_end\n")
 
 class Cable(object):
     """This class represents the propagation through a cable and the splitter."""
@@ -187,7 +189,7 @@ class ONUPort(object):
         self.grant_loop = True
         start_grant_usage = None
         current_grant_usage = 0
-        b= self.byte_size
+        #b= self.byte_size
         while self.grant_final_time > self.env.now:
 
             get_pkt = self.env.process(self.get_pkt())#trying to get a package in the buffer
@@ -236,7 +238,7 @@ class ONUPort(object):
         if start_grant_usage:
             self.grant_real_usage.put( [start_grant_usage , start_grant_usage + current_grant_usage] )
         else:
-            logging.debug("buffer_size:{}, grant duration:{}".format(b,grant_timeout))
+            #logging.debug("buffer_size:{}, grant duration:{}".format(b,grant_timeout))
             self.grant_real_usage.put([])
 
 
@@ -324,8 +326,10 @@ class ONU(object):
                     else:
                         logging.debug("{}:Erro in pred_grant_usage".format(self.env.now))
                         break
-            # if len(pred_grant_usage_report) > 0 and len(pred_grant_usage_report) == len(grant['prediction']):
-            #     print r2_score(np.array(pred_grant_usage_report)[:,0],np.array(grant['prediction'])[:,0])
+            if len(pred_grant_usage_report) > 0 and len(pred_grant_usage_report) == len(grant['prediction']):
+                score_start = r2_score(np.array(pred_grant_usage_report)[:,0],np.array(grant['prediction'])[:,0])
+                score_end = r2_score(np.array(pred_grant_usage_report)[:,1],np.array(grant['prediction'])[:,1])
+                score_file.write("{},{}\n".format(score_start,score_end))
             yield self.env.timeout(self.delay)
             yield self.grant_report_store.put(pred_grant_usage_report)#Signals the end of grant processing
 
@@ -350,13 +354,13 @@ class DBA(object):
         self.grant_store = grant_store
         self.guard_interval = 0.000001
 
-class DBA_IPACT(DBA):
+class IPACT(DBA):
     def __init__(self,env,max_grant_size,grant_store):
         DBA.__init__(self,env,max_grant_size,grant_store)
         self.counter = simpy.Resource(self.env, capacity=1)#create a queue of requests to DBA
 
 
-    def ipact(self,ONU,buffer_size):
+    def dba(self,ONU,buffer_size):
         with self.counter.request() as my_turn:
             yield my_turn
             time_stamp = self.env.now
@@ -395,7 +399,7 @@ class DBA_PRED_FILE(DBA):
             splitpred = pred.split(',')
             self.PREDICTION_FILE[int(splitpred[0])].append([float(splitpred[1]),float(splitpred[2])])
 
-    def ipact_pred_file(self,ONU,buffer_size):
+    def dba(self,ONU,buffer_size):
         with self.counter.request() as my_turn:
             yield my_turn
 
@@ -490,7 +494,7 @@ class PD_DBA(DBA):
 
 
 
-    def pd_dba(self,ONU,buffer_size):
+    def dba(self,ONU,buffer_size):
         with self.counter.request() as my_turn:
             yield my_turn
             time_stamp = self.env.now
@@ -531,7 +535,7 @@ class OLT(object):
     def __init__(self,env,cable,max_grant_size):
         self.env = env
         self.grant_store = simpy.Store(self.env)
-        self.dba = DBA_IPACT(self.env, max_grant_size, self.grant_store)
+        self.dba = PD_DBA(self.env, max_grant_size, self.grant_store)
         self.receiver = self.env.process(self.OLT_receiver(cable))#
         self.sender = self.env.process(self.OLT_sender(cable))#
 
@@ -546,7 +550,7 @@ class OLT(object):
         while True:
             request = yield cable.get_request()#get a request message
             #print("Received Request from ONU {} at {}".format(request['ONU'].oid, self.env.now))
-            self.env.process(self.dba.ipact(request['ONU'],request['buffer_size']))
+            self.env.process(self.dba.dba(request['ONU'],request['buffer_size']))
 
 
 #starts the simulator
@@ -562,7 +566,7 @@ MAC_TABLE['olt'] = "ff:ff:ff:ff:00:01"
 for i in range(NUMBER_OF_ONUs):
     #distance = random.randint(19,DISTANCE)
     distance= DISTANCE
-    exp=116*20#arbitrary value for the exponential distribution
+    exp=116#arbitrary value for the exponential distribution
     ONU_List.append(ONU(distance,i,env,cable,exp,ONU_QUEUE_LIMIT,PKT_SIZE,MAX_BUCKET_SIZE))
 
 olt = OLT(env,cable,MAX_GRANT_SIZE)
@@ -571,3 +575,4 @@ env.run(until=SIM_DURATION)
 delay_file.close()
 grant_time_file.close()
 pkt_file.close()
+score_file.close
