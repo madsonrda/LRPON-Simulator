@@ -2,14 +2,14 @@ import simpy
 import random
 import functools
 import time
-import numpy
+import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import sys
 import argparse
 import logging
 from sklearn import linear_model
-
+from sklearn.metrics import r2_score
 
 #Parsing the inputs arguments
 parser = argparse.ArgumentParser(description="Long Reach PON Simulator")
@@ -31,7 +31,7 @@ MAX_BUCKET_SIZE = args.B
 ONU_QUEUE_LIMIT = args.Q
 
 #settings
-SIM_DURATION = 30
+SIM_DURATION = 20
 RANDOM_SEED = 20
 PKT_SIZE = 9000
 MAC_TABLE = {}
@@ -187,6 +187,7 @@ class ONUPort(object):
         self.grant_loop = True
         start_grant_usage = None
         current_grant_usage = 0
+        b= self.byte_size
         while self.grant_final_time > self.env.now:
 
             get_pkt = self.env.process(self.get_pkt())#trying to get a package in the buffer
@@ -204,12 +205,12 @@ class ONUPort(object):
 
             else:
                 #there is not packate to be sent
-                logging.debug("there is not packate to be sent")
+                logging.debug("{}: there is not packate to be sent".format(self.env.now))
                 break
             self.busy = 1
             self.byte_size -= pkt.size
             if self.byte_size < 0:#Prevent the buffer from being negative
-
+                logging.debug("{}: Negative buffer".format(self.env.now))
                 self.byte_size += pkt.size
                 self.buffer.put(pkt)
                 break
@@ -229,11 +230,13 @@ class ONUPort(object):
             current_grant_usage += end_pkt_usage - start_pkt_usage
 
             self.pkt = None
+
         #ending of the grant
         self.grant_loop = False
         if start_grant_usage:
             self.grant_real_usage.put( [start_grant_usage , start_grant_usage + current_grant_usage] )
         else:
+            logging.debug("buffer_size:{}, grant duration:{}".format(b,grant_timeout))
             self.grant_real_usage.put([])
 
 
@@ -296,28 +299,34 @@ class ONU(object):
             grant_usage = yield self.port.grant_real_usage.get()
             if len(grant_usage) == 0:
                 logging.debug("Erro in grant_usage")
+            #yield self.env.timeout(self.delay)
 
             if grant['prediction']:#check if have any predicion in the grant
-                for pred in grant['prediction'][1:]:
+                for pred in grant['prediction']:
                     pred_grant = {'grant_size': grant['grant_size'], 'grant_final_time': pred[1]}
-
                     try:
                         next_grant = pred[0] - self.env.now#time until next grant begining
                         yield self.env.timeout(next_grant)#wait for the next grant
                     except Exception as e:
+                        logging.debug("{}: pred {}, gf {}".format(self.env.now,pred,grant['grant_final_time']))
                         logging.debug("Error while waiting for the next grant ({})".format(e))
-                        pass
+                        break
 
                     self.port.set_grant(pred_grant)
                     sent_pkt = self.env.process(self.port.sent(self.oid))#sending predicted messages
 
                     yield sent_pkt
                     grant_usage = yield self.port.grant_real_usage.get()
+                    yield self.env.timeout(self.delay)
                     if len(grant_usage) > 0:
                         pred_grant_usage_report.append(grant_usage)
+                        #logging.debug("{}:pred={},usage={}".format(self.env.now,pred,grant_usage))
                     else:
-                        logging.debug("Erro in grant_usage")
-
+                        logging.debug("{}:Erro in pred_grant_usage".format(self.env.now))
+                        break
+            # if len(pred_grant_usage_report) > 0 and len(pred_grant_usage_report) == len(grant['prediction']):
+            #     print r2_score(np.array(pred_grant_usage_report)[:,0],np.array(grant['prediction'])[:,0])
+            yield self.env.timeout(self.delay)
             yield self.grant_report_store.put(pred_grant_usage_report)#Signals the end of grant processing
 
     def ONU_sender(self, cable):
@@ -365,7 +374,8 @@ class DBA_IPACT(DBA):
             self.grant_store.put(grant)
             Grant_ONU_counter[ONU.oid] += 1
 
-            yield self.env.timeout(grant_time)
+
+            yield self.env.timeout(delay+grant_time)
 
 class DBA_PRED_FILE(DBA):
     def __init__(self,env,max_grant_size,grant_store):
@@ -418,6 +428,7 @@ class PD_DBA(DBA):
         self.counter = simpy.Resource(self.env, capacity=1)#create a queue of requests to DBA
         self.window = window
         self.predict = predict
+        self.predictions = None
         self.predictions_array = []
         self.grant_history = range(NUMBER_OF_ONUs)
         for i in range(NUMBER_OF_ONUs):
@@ -445,17 +456,17 @@ class PD_DBA(DBA):
                         new_interval = [ interval1[1] + self.guard_interval, interval2[1] ]
                         predictions[ index2 ] = new_interval
                         self.predictions_array[index1] = new_interval
-
-
                 else:
                     break
             j+=1
         return predictions
 
 
-    def predictor_online(self, ONU_id):
-        if len( self.grant_history[ONU_id]['start'] ) >= self.window :
-            df_tmp = pd.DataFrame(self.grant_history)
+    def predictor(self, ONU_id):
+        #yield self.env.timeout(0.0000000000001)
+
+        if len( self.grant_history[ONU_id]['start'] ) > self.window :
+            df_tmp = pd.DataFrame(self.grant_history[ONU_id])
             X_pred = np.arange(self.grant_history[ONU_id]['counter'][-1] +1, self.grant_history[ONU_id]['counter'][-1] + 1 + self.predict).reshape(-1,1)
             #predicting start time
             reg = linear_model.LinearRegression()
@@ -472,20 +483,26 @@ class PD_DBA(DBA):
                 predictions.append( [ start_pred[i], end_pred[i] ] )
 
             #fixing overlap
-            predictions = predictions_schedule(predictions)
-            return predictions
+            #predictions = self.predictions_schedule(predictions)
+            self.predictions = predictions
         else:
-            return None
+            self.predictions = None
 
 
 
-    def pd_dba(self,ONU,buffer_size,predictions_report):
+    def pd_dba(self,ONU,buffer_size):
         with self.counter.request() as my_turn:
             yield my_turn
             time_stamp = self.env.now
             delay = ONU.delay
-            if predictions_report:
-                self.update_prediction_report(predictions_report)
+            if len(ONU.grant_report) > 0:
+                for report in ONU.grant_report:
+                    self.grant_history[ONU.oid]['start'].append(report[0])
+                    self.grant_history[ONU.oid]['end'].append(report[1])
+                    self.grant_history[ONU.oid]['counter'].append( len( self.grant_history[ONU.oid]['start'] ) )
+
+
+
 
             if self.max_grant_size > 0 and buffer_size > self.max_grant_size:
                 buffer_size = self.max_grant_size
@@ -494,18 +511,18 @@ class PD_DBA(DBA):
             grant_time = delay + sending_time + self.guard_interval
             grant_final_time = self.env.now + grant_time
 
-            self.grant_history[ONU.id]['start'].append(self.env.now)
-            self.grant_history[ONU.id]['end'].append(grant_final_time)
-            self.grant_history[ONU.id]['counter'].append( len( self.grant_history[ONU.id]['start'] ) )
+            self.grant_history[ONU.oid]['start'].append(self.env.now)
+            self.grant_history[ONU.oid]['end'].append(grant_final_time)
+            self.grant_history[ONU.oid]['counter'].append( len( self.grant_history[ONU.oid]['start'] ) )
 
             #PREDICTIONS
-            prediction = predictor_online(ONU.id)
+            self.predictor(ONU.oid)
+            prediction = self.predictions
 
             #grant_time_file.write( "{},{},{}\n".format(ONU.oid,self.env.now,grant_final_time) )
             grant = {'ONU':ONU,'grant_size': buffer_size, 'grant_final_time': grant_final_time, 'prediction': prediction}
             self.grant_store.put(grant)
-
-            yield self.env.timeout(grant_time)
+            yield self.env.timeout(grant_time+delay)
 
 
 
@@ -528,7 +545,7 @@ class OLT(object):
         """A process which receives a request message from the ONUs."""
         while True:
             request = yield cable.get_request()#get a request message
-            print("Received Request from ONU {} at {}".format(request['ONU'].oid, self.env.now))
+            #print("Received Request from ONU {} at {}".format(request['ONU'].oid, self.env.now))
             self.env.process(self.dba.ipact(request['ONU'],request['buffer_size']))
 
 
@@ -545,7 +562,7 @@ MAC_TABLE['olt'] = "ff:ff:ff:ff:00:01"
 for i in range(NUMBER_OF_ONUs):
     #distance = random.randint(19,DISTANCE)
     distance= DISTANCE
-    exp=116*10#arbitrary value for the exponential distribution
+    exp=116*20#arbitrary value for the exponential distribution
     ONU_List.append(ONU(distance,i,env,cable,exp,ONU_QUEUE_LIMIT,PKT_SIZE,MAX_BUCKET_SIZE))
 
 olt = OLT(env,cable,MAX_GRANT_SIZE)
