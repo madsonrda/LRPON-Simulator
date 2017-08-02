@@ -24,7 +24,7 @@ parser.add_argument("-Q", "--qlimit", type=int, default=None ,help="the size of 
 parser.add_argument("-m", "--maxgrant", type=float, default=0, help="The maximum size of buffer which a grant can allow")
 parser.add_argument("-d","--distance", type=int, default=100, nargs='?', help="Distance in km from ONU to OLT")
 parser.add_argument("-e","--exponent", type=int, default=116, nargs='?', help="Packet arrivals distribution exponent")
-parser.add_argument("-o", "--output", type=str, help="delay data output file")
+parser.add_argument("-o", "--output", type=str, default=None, help="delay data output file")
 args = parser.parse_args()
 
 #Arguments
@@ -35,6 +35,7 @@ MAX_GRANT_SIZE = args.maxgrant
 MAX_BUCKET_SIZE = args.bucket
 ONU_QUEUE_LIMIT = args.qlimit
 EXPONENT = args.exponent
+DELAY_FILE = args.output
 
 
 
@@ -64,16 +65,16 @@ except OSError as e:
 
 #logging
 logging.basicConfig(filename='g-sim.log',level=logging.DEBUG,format='%(asctime)s %(message)s')
-if args.output:
-    delay_file = open("csv/delay/{}.csv".format(args.output),"w")
+if DELAY_FILE:
+    delay_file = open("csv/delay/{}.csv".format(DELAY_FILE),"w")
 else:
     delay_file = open("csv/delay/{}-{}-{}-{}-{}-{}-delay.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,EXPONENT),"w")
 delay_file.write("ONU_id,delay\n")
 grant_time_file = open("csv/grant_time/{}-{}-{}-{}-{}-{}-grant_time.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,EXPONENT),"w")
 grant_time_file.write("source address,destination address,opcode,timestamp,counter,ONU_id,start,end\n")
-pkt_file = open("csv/pkt/pkt.csv","w")
+pkt_file = open("csv/pkt/{}-{}-{}-{}-{}-{}-pkt.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,EXPONENT),"w")
 pkt_file.write("size\n")
-score_file = open("csv/score.csv","w")
+score_file = open("csv/{}-{}-{}-{}-{}-{}-score.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,EXPONENT),"w")
 score_file.write("r2_start,r2_end\n")
 
 class Cable(object):
