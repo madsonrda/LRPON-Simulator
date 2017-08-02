@@ -45,6 +45,6 @@ plt.fill_between(load, ipact_df.iloc[0] - ipact_df.iloc[1],ipact_df.iloc[0] + ip
 plt.fill_between(load, pd_dba_df.iloc[0] - pd_dba_df.iloc[1],pd_dba_df.iloc[0] + pd_dba_df.iloc[1], alpha=0.1,color="b")
 
 plt.plot(load, ipact_df.iloc[0], 'o-', color="r",label="IPACT")
-plt.plot(load, pd_dba_df.iloc[0], '>-', color="b",label="PD_DBA")
+plt.plot(load, pd_dba_df.iloc[0], '>-', color="b",label="PD-DBA")
 plt.legend(loc='upper center', shadow=True)
 plt.savefig("img/Delay-"+title)

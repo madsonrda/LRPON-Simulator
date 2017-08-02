@@ -17,7 +17,7 @@ parser = argparse.ArgumentParser(description="Long Reach PON Simulator")
 group = parser.add_mutually_exclusive_group()
 #group.add_argument("-v", "--verbose", action="store_true")
 group.add_argument("-q", "--quiet", action="store_true")
-parser.add_argument("A", type=str, default='ipact', help="DBA algorithm")
+parser.add_argument("A", type=str, default='ipact',choices=["ipact","pd_dba"], help="DBA algorithm")
 parser.add_argument("-O", "--onu", type=int, default=3, help="The number of ONUs")
 parser.add_argument("-b", "--bucket", type=int, default=9000, help="The size of the ONU sender bucket in bytes")
 parser.add_argument("-Q", "--qlimit", type=int, default=None ,help="The size of the ONU port queue in bytes")
@@ -25,6 +25,8 @@ parser.add_argument("-m", "--maxgrant", type=float, default=0, help="The maximum
 parser.add_argument("-d","--distance", type=int, default=100, nargs='?', help="Distance in km from ONU to OLT")
 parser.add_argument("-e","--exponent", type=int, default=116, nargs='?', help="Packet arrivals distribution exponent")
 parser.add_argument("-s","--seed", type=int, default=20, help="Random seed")
+parser.add_argument("-w","--window", type=int, default=20, help="PD-DBA window")
+parser.add_argument("-p","--predict", type=int, default=20, help="PD-DBA predictions")
 parser.add_argument("-o", "--output", type=str, default=None, help="Delay data output file")
 args = parser.parse_args()
 
@@ -38,6 +40,8 @@ ONU_QUEUE_LIMIT = args.qlimit
 EXPONENT = args.exponent
 DELAY_FILE = args.output
 RANDOM_SEED = args.seed
+WINDOW = args.window
+PREDICT = args.predict
 
 
 
@@ -562,11 +566,11 @@ class PD_DBA(DBA):
 
 
 class OLT(object):
-    def __init__(self,env,cable,max_grant_size,dba):
+    def __init__(self,env,cable,max_grant_size,dba,window,predict):
         self.env = env
         self.grant_store = simpy.Store(self.env)
         if dba == "pd_dba":
-            self.dba = PD_DBA(self.env, max_grant_size, self.grant_store)
+            self.dba = PD_DBA(self.env, max_grant_size, self.grant_store,window,predict)
         else:
 
             self.dba = IPACT(self.env, max_grant_size, self.grant_store)
@@ -603,7 +607,7 @@ for i in range(NUMBER_OF_ONUs):
     #exp=116*25#arbitrary value for the exponential distribution
     ONU_List.append(ONU(distance,i,env,cable,EXPONENT,ONU_QUEUE_LIMIT,PKT_SIZE,MAX_BUCKET_SIZE))
 
-olt = OLT(env,cable,MAX_GRANT_SIZE,DBA_ALGORITHM)
+olt = OLT(env,cable,MAX_GRANT_SIZE,DBA_ALGORITHM,WINDOW,PREDICT)
 logging.info("starting simulator")
 env.run(until=SIM_DURATION)
 delay_file.close()
