@@ -51,6 +51,7 @@ PKT_SIZE = 9000
 MAC_TABLE = {}
 Grant_ONU_counter = {}
 
+#create directories
 try:
     os.makedirs('csv/delay')
 except OSError as e:
@@ -72,6 +73,8 @@ except OSError as e:
 logging.basicConfig(filename='g-sim.log',level=logging.DEBUG,format='%(asctime)s %(message)s')
 if DELAY_FILE:
     delay_file = open("{}.csv".format(DELAY_FILE),"w")
+elif DBA_ALGORITHM == "pd_dba":
+    delay_file = open("csv/delay/{}-{}-{}-{}-{}-{}-{}-{}-{}-delay.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT,WINDOW,PREDICT),"w")
 else:
     delay_file = open("csv/delay/{}-{}-{}-{}-{}-{}-{}-delay.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT),"w")
 delay_file.write("ONU_id,delay\n")

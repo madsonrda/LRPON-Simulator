@@ -23,7 +23,7 @@ for exp in exponents:
     ipact = []
     pd_dba = []
     for seed in seeds:
-        df_tmp = pd.read_csv("csv/delay/ipact-3-27000-0-100-{}-{}-delay.csv".format(seed, exp))
+        df_tmp = pd.read_csv("csv/delay/ipact-3-27000-0-100-{}-{}-20-5-delay.csv".format(seed, exp))
         ipact.append(df_tmp['delay'].mean()*1000)
         df_tmp = pd.read_csv("csv/delay/pd_dba-3-27000-0-100-{}-{}-delay.csv".format(seed,exp))
         pd_dba.append(df_tmp['delay'].mean()*1000)
