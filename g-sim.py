@@ -27,7 +27,7 @@ parser.add_argument("-e","--exponent", type=int, default=116, nargs='?', help="P
 parser.add_argument("-s","--seed", type=int, default=20, help="Random seed")
 parser.add_argument("-w","--window", type=int, default=20, help="PD-DBA window")
 parser.add_argument("-p","--predict", type=int, default=20, help="PD-DBA predictions")
-parser.add_argument("-o", "--output", type=str, default=None, help="Delay data output file")
+parser.add_argument("-o", "--output", type=str, default=None, help="Output file name")
 args = parser.parse_args()
 
 #Arguments
@@ -38,7 +38,7 @@ MAX_GRANT_SIZE = args.maxgrant
 MAX_BUCKET_SIZE = args.bucket
 ONU_QUEUE_LIMIT = args.qlimit
 EXPONENT = args.exponent
-DELAY_FILE = args.output
+FILENAME = args.output
 RANDOM_SEED = args.seed
 WINDOW = args.window
 PREDICT = args.predict
@@ -71,17 +71,23 @@ except OSError as e:
 
 #logging
 logging.basicConfig(filename='g-sim.log',level=logging.DEBUG,format='%(asctime)s %(message)s')
-if DELAY_FILE:
-    delay_file = open("{}.csv".format(DELAY_FILE),"w")
+if FILENAME:
+    delay_file = open("{}-delay.csv".format(FILENAME),"w")
+    grant_time_file = open("{}-grant_time.csv".format(FILENAME),"w")
+    pkt_file = open("{}-pkt.csv".format(FILENAME),"w")
 elif DBA_ALGORITHM == "pd_dba":
     delay_file = open("csv/delay/{}-{}-{}-{}-{}-{}-{}-{}-{}-delay.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT,WINDOW,PREDICT),"w")
+    grant_time_file = open("csv/grant_time/{}-{}-{}-{}-{}-{}-{}-{}-{}-grant_time.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT,WINDOW,PREDICT),"w")
+    pkt_file = open("csv/pkt/{}-{}-{}-{}-{}-{}-{}-{}-{}-grant_time.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT,WINDOW,PREDICT),"w")
 else:
     delay_file = open("csv/delay/{}-{}-{}-{}-{}-{}-{}-delay.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT),"w")
+    grant_time_file = open("csv/grant_time/{}-{}-{}-{}-{}-{}-{}-grant_time.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT),"w")
+    pkt_file = open("csv/pkt/{}-{}-{}-{}-{}-{}-{}-pkt.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT),"w")
+
 delay_file.write("ONU_id,delay\n")
-grant_time_file = open("csv/grant_time/{}-{}-{}-{}-{}-{}-{}-grant_time.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT),"w")
 grant_time_file.write("source address,destination address,opcode,timestamp,counter,ONU_id,start,end\n")
-pkt_file = open("csv/pkt/{}-{}-{}-{}-{}-{}-{}-pkt.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT),"w")
 pkt_file.write("size\n")
+
 score_file = open("csv/{}-{}-{}-{}-{}-{}-{}-score.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT),"w")
 score_file.write("r2_start,r2_end\n")
 
