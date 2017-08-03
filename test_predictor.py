@@ -37,8 +37,8 @@ def grant_predictor(onu_id,onu_df,window=20,predict=5):
             break
         #predicting start time
         reg1 = linear_model.LinearRegression()
-        reg2 = linear_model.Ridge()
-        reg3 = linear_model.Lasso()
+        reg2 = linear_model.Ridge(alpha = .5)
+        reg3 = linear_model.Lasso(alpha = .1)
         reg1.fit(np.array( df_tmp['counter'] ).reshape(-1,1) , df_tmp['start'])
         reg2.fit(np.array( df_tmp['counter'] ).reshape(-1,1) , df_tmp['start'])
         reg3.fit(np.array( df_tmp['counter'] ).reshape(-1,1) , df_tmp['start'])
@@ -68,8 +68,8 @@ def grant_predictor(onu_id,onu_df,window=20,predict=5):
 
         #predicting end time
         reg1 = linear_model.LinearRegression()
-        reg2 = linear_model.Ridge()
-        reg3 = linear_model.Lasso()
+        reg2 = linear_model.Ridge(alpha = .5)
+        reg3 = linear_model.Lasso(alpha = .1)
         reg1.fit(np.array( df_tmp['counter'] ).reshape(-1,1) , df_tmp['end'])
         reg2.fit(np.array( df_tmp['counter'] ).reshape(-1,1) , df_tmp['end'])
         reg3.fit(np.array( df_tmp['counter'] ).reshape(-1,1) , df_tmp['end'])
