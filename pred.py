@@ -7,8 +7,9 @@ from sklearn import linear_model
 prediction_file = open("grant.pred","w")
 
 l= []
+over = []
 
-data = pd.read_csv("grant_time.csv")
+data = pd.read_csv("data-grant_time.csv")
 
 def overlap(l):
     o=0
@@ -17,7 +18,8 @@ def overlap(l):
         for i in l[j:]:
             if interval[1] > i[0]:
                 o+=1
-                print("overlap:{}-{}".format(interval,i))
+                #print("overlap:{}-{}".format(interval,i))
+                over.append(interval[1] - i[0])
             else:
                 break
         j+=1
@@ -79,8 +81,10 @@ for onu in data['ONU_id'].unique():
     onu_df = data[ data['ONU_id'] == onu ][ ['start','end'] ]
     grant_predictor(onu,onu_df)
 prediction_file.close()
-# l.sort()
+l.sort()
 # l = remove_overlap(l)
-# overlap(l)
+overlap(l)
 # print set([x for x in l if l.count(x) > 1])
 #X_train, X_test, y_train, y_test = train_test_split(np.array(df_tmp.index[30:60]).reshape(-1,1), df_tmp['start'].iloc[30:60], train_size=0.8, test_size=0.2, random_state=42)
+serie = pd.DataFrame({"overlap":over})
+print serie.describe()
