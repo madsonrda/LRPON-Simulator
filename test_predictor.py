@@ -4,23 +4,14 @@ import statsmodels.api as sm
 import matplotlib.pyplot as plt
 from sklearn import linear_model
 from sklearn.metrics import r2_score
-from sklearn.metrics import mean_absolute_error as mae
 from sklearn.metrics import mean_squared_error as mse
 
 
-data = pd.read_csv("data-grant_time.csv")
-
-r2 = open("c_test_predictor_r2_score.csv",'w')
-r2.write("ONU_id,OLS_start,OLS_end,Ridge_start,Ridge_end,Lasso_start,Lasso_end\n")
-MAE = open("c_test_predictor_mean_absolute_error.csv",'w')
-MAE.write("ONU_id,OLS_start,OLS_end,Ridge_start,Ridge_end,Lasso_start,Lasso_end\n")
-MSE = open("c_test_predictor_mean_squared_error.csv",'w')
-MSE.write("ONU_id,OLS_start,OLS_end,Ridge_start,Ridge_end,Lasso_start,Lasso_end\n")
-
-
-def grant_predictor(onu_id,onu_df,window=20,predict=5):
+def grant_predictor(onu_id,onu_df,window,predict,features,model,target,metric):
     index=0
     index_max = 0
+
+    metric_list = []
     while index+window < len(onu_df):
         interval=index+window
 
@@ -30,82 +21,73 @@ def grant_predictor(onu_id,onu_df,window=20,predict=5):
         else:
             index_max = len(onu_df)-1
 
-        X_pred = np.array(onu_df['counter'].iloc[interval:index_max]).reshape(-1,1)
-        #X_pred = np.array(onu_df['timestamp'].iloc[interval:index_max]).reshape(-1,1)
-        #X_pred = onu_df[['timestamp','counter']].iloc[interval:index_max]
-        if len(X_pred) == 0:
-            break
-        #predicting start time
-        reg1 = linear_model.LinearRegression()
-        reg2 = linear_model.Ridge(alpha = .5)
-        reg3 = linear_model.Lasso(alpha = .01)
-        reg1.fit(np.array( df_tmp['counter'] ).reshape(-1,1) , df_tmp['start'])
-        reg2.fit(np.array( df_tmp['counter'] ).reshape(-1,1) , df_tmp['start'])
-        reg3.fit(np.array( df_tmp['counter'] ).reshape(-1,1) , df_tmp['start'])
-        # reg1.fit(np.array( df_tmp['timestamp'] ).reshape(-1,1) , df_tmp['start'])
-        # reg2.fit(np.array( df_tmp['timestamp'] ).reshape(-1,1) , df_tmp['start'])
-        # reg3.fit(np.array( df_tmp['timestamp'] ).reshape(-1,1) , df_tmp['start'])
-        # reg1.fit(df_tmp[['timestamp','counter']] , df_tmp['start'])
-        # reg2.fit(df_tmp[['timestamp','counter']] , df_tmp['start'])
-        # reg3.fit(df_tmp[['timestamp','counter']] , df_tmp['start'])
-        OLS_start_pred = reg1.predict(X_pred)
-        Ridge_start_pred = reg2.predict(X_pred)
-        Lasso_start_pred = reg3.predict(X_pred)
-        Y_true = onu_df['start'].iloc[interval:index_max]
-        #r2 score srart
-        OLS_start_score = r2_score(Y_true, OLS_start_pred)
-        Ridge_start_score = r2_score(Y_true, Ridge_start_pred)
-        Lasso_start_score = r2_score(Y_true, Lasso_start_pred)
-        #mae start
-        OLS_start_mae = mae(Y_true, OLS_start_pred)
-        Ridge_start_mae = mae(Y_true, Ridge_start_pred)
-        Lasso_start_mae = mae(Y_true, Lasso_start_pred)
-        #mse start
-        OLS_start_mse = mse(Y_true, OLS_start_pred)
-        Ridge_start_mse = mse(Y_true, Ridge_start_pred)
-        Lasso_start_mse = mse(Y_true, Lasso_start_pred)
+        reg = model
+        if len(features) == 1:
+            X_pred = np.array(onu_df[features].iloc[interval:index_max]).reshape(-1,1)
+            if len(X_pred):
+                break
+            reg.fit(np.array( df_tmp[features] ).reshape(-1,1) , df_tmp[target])
 
+        else:
+            X_pred = onu_df[features].iloc[interval:index_max]
+            if len(X_pred):
+                break
+            reg.fit(df_tmp[features] , df_tmp[target])
 
-        #predicting end time
-        reg1 = linear_model.LinearRegression()
-        reg2 = linear_model.Ridge(alpha = .5)
-        reg3 = linear_model.Lasso(alpha = .01)
-        reg1.fit(np.array( df_tmp['counter'] ).reshape(-1,1) , df_tmp['end'])
-        reg2.fit(np.array( df_tmp['counter'] ).reshape(-1,1) , df_tmp['end'])
-        reg3.fit(np.array( df_tmp['counter'] ).reshape(-1,1) , df_tmp['end'])
-        # reg1.fit(np.array( df_tmp['timestamp'] ).reshape(-1,1) , df_tmp['end'])
-        # reg2.fit(np.array( df_tmp['timestamp'] ).reshape(-1,1) , df_tmp['end'])
-        # reg3.fit(np.array( df_tmp['timestamp'] ).reshape(-1,1) , df_tmp['end'])
-        # reg1.fit(df_tmp[['timestamp','counter']] , df_tmp['end'])
-        # reg2.fit(df_tmp[['timestamp','counter']] , df_tmp['end'])
-        # reg3.fit(df_tmp[['timestamp','counter']] , df_tmp['start'])
-        OLS_end_pred = reg1.predict(X_pred)
-        Ridge_end_pred = reg2.predict(X_pred)
-        Lasso_end_pred = reg3.predict(X_pred)
-        Y_true = onu_df['end'].iloc[interval:index_max]
-        #r2 score end
-        OLS_end_score = r2_score(Y_true, OLS_end_pred)
-        Ridge_end_score = r2_score(Y_true, Ridge_end_pred)
-        Lasso_end_score = r2_score(Y_true, Lasso_end_pred)
-        #mae end
-        OLS_end_mae = mae(Y_true, OLS_end_pred)
-        Ridge_end_mae = mae(Y_true, Ridge_end_pred)
-        Lasso_end_mae = mae(Y_true, Lasso_end_pred)
-        #mse end
-        OLS_end_mse = mse(Y_true, OLS_end_pred)
-        Ridge_end_mse = mse(Y_true, Ridge_end_pred)
-        Lasso_end_mse = mse(Y_true, Lasso_end_pred)
+        pred = reg.predict(X_pred)
+        Y_true = onu_df[target].iloc[interval:index_max]
+
+        metric_list(metric(Y_true, OLS_start_pred))
 
         index += predict
-        r2.write("{},{},{},{},{},{},{}\n".format(onu_id,OLS_start_score,OLS_end_score,Ridge_start_score,Ridge_end_score,Lasso_start_score,Lasso_end_score))
-        MAE.write("{},{},{},{},{},{},{}\n".format(onu_id,OLS_start_mae,OLS_end_mae,Ridge_start_mae,Ridge_end_mae,Lasso_start_mae,Lasso_end_mae))
-        MSE.write("{},{},{},{},{},{},{}\n".format(onu_id,OLS_start_mse,OLS_end_mse,Ridge_start_mse,Ridge_end_mse,Lasso_start_mse,Lasso_end_mse))
+
+    return np.mean(metric_list)
 
 
-for onu in data['ONU_id'].unique():
-    onu_df = data[ data['ONU_id'] == onu ][ ['timestamp','counter','start','end'] ]
-    grant_predictor(onu,onu_df)
+exponents = [1160, 2320, 3480]
+seeds = [20]
+windows = [10,20,30]
+predicts = [5,10,15,20]
+features = [['counter'],['timestamp','counter']]
+models = {'ols': linear_model.LinearRegression(),'ridge': linear_model.Ridge(alpha=.5),'lasso':linear_model.Lasso(alpha=.1)}
+metrics = {'r2': r2_score,'mse': mse}
+targets = ['start','end']
 
-r2.close()
-MAE.close()
-MSE.close()
+
+table = {}
+
+for e in exponents:
+    table[e] = {}
+    for f in features:
+        table[e]["{}".format(f)] = {}
+        for t in targets:
+            table[e]["{}".format(f)][t]= {'r2': {'name':'','max':float("-inf") }, 'mse': {'name':'','min':float("inf") }}
+
+
+for exp in exponents:
+    for feature in features:
+        for model in models:
+            for w in windows:
+                for p in predicts:
+                    for target in targets:
+                        for metric in metrics:
+                            result_list = []
+                            for seed in seeds:
+                                data = pd.read_csv("csv/delay/ipact-3-27000-0-100-{}-{}-delay.csv".format(seed, exp))
+                                for onu in data['ONU_id'].unique():
+                                    onu_df = data[ data['ONU_id'] == onu ][ ['timestamp','counter','start','end'] ]
+                                    result = grant_predictor(onu,onu_df,w,p,feature,models[model],target,metrics[metric])
+                                    result_list.append(result)
+                            mean = np.mean(result_list)
+                            name = "{}:w={},p={}".format(model,w,p)
+                            if metric == 'r2':
+                                if mean > table[exp]["{}".format(feature)][target]['r2']['max']:
+                                    table[exp]["{}".format(feature)][target]['r2']['max'] = mean
+                                    table[exp]["{}".format(feature)][target]['r2']['name'] = name
+                            else:
+                                if mean < table[exp]["{}".format(feature)][target]['mse']['min']:
+                                    table[exp]['r2']["{}".format(feature)][target]['mse']['min'] = mean
+                                    table[exp]['r2']["{}".format(feature)][target]['mse']['name'] = name
+
+
+print table
