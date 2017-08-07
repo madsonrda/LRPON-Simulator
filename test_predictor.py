@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 from sklearn import linear_model
 from sklearn.metrics import r2_score
 from sklearn.metrics import mean_squared_error as mse
+import time
 
 
 def grant_predictor(onu_id,onu_df,window,predict,features,model,target,metric):
@@ -12,6 +13,7 @@ def grant_predictor(onu_id,onu_df,window,predict,features,model,target,metric):
     index_max = 0
 
     metric_list = []
+
     while index+window < len(onu_df):
         interval=index+window
 
@@ -22,22 +24,23 @@ def grant_predictor(onu_id,onu_df,window,predict,features,model,target,metric):
             index_max = len(onu_df)-1
 
         reg = model
+
+
         if len(features) == 1:
             X_pred = np.array(onu_df[features].iloc[interval:index_max]).reshape(-1,1)
-            if len(X_pred):
+            if len(X_pred) == 0:
                 break
             reg.fit(np.array( df_tmp[features] ).reshape(-1,1) , df_tmp[target])
-
         else:
             X_pred = onu_df[features].iloc[interval:index_max]
-            if len(X_pred):
+            if len(X_pred) == 0:
                 break
             reg.fit(df_tmp[features] , df_tmp[target])
 
         pred = reg.predict(X_pred)
         Y_true = onu_df[target].iloc[interval:index_max]
 
-        metric_list(metric(Y_true, OLS_start_pred))
+        metric_list.append(metric(Y_true, pred))
 
         index += predict
 
@@ -73,7 +76,7 @@ for exp in exponents:
                         for metric in metrics:
                             result_list = []
                             for seed in seeds:
-                                data = pd.read_csv("csv/delay/ipact-3-27000-0-100-{}-{}-delay.csv".format(seed, exp))
+                                data = pd.read_csv("csv/grant_time/ipact-3-27000-0-100-{}-{}-grant_time.csv".format(seed, exp))
                                 for onu in data['ONU_id'].unique():
                                     onu_df = data[ data['ONU_id'] == onu ][ ['timestamp','counter','start','end'] ]
                                     result = grant_predictor(onu,onu_df,w,p,feature,models[model],target,metrics[metric])
@@ -86,8 +89,8 @@ for exp in exponents:
                                     table[exp]["{}".format(feature)][target]['r2']['name'] = name
                             else:
                                 if mean < table[exp]["{}".format(feature)][target]['mse']['min']:
-                                    table[exp]['r2']["{}".format(feature)][target]['mse']['min'] = mean
-                                    table[exp]['r2']["{}".format(feature)][target]['mse']['name'] = name
+                                    table[exp]["{}".format(feature)][target]['mse']['min'] = mean
+                                    table[exp]["{}".format(feature)][target]['mse']['name'] = name
 
 
 print table
