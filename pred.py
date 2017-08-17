@@ -42,7 +42,7 @@ def remove_overlap(l):
     return l
 
 
-def grant_predictor(onu_id,onu_df,window=20,predict=5):
+def grant_predictor(onu_id,onu_df,window=10,predict=5):
     index=0
     index_max = 0
     while index+window < len(onu_df):

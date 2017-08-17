@@ -70,6 +70,11 @@ try:
 except OSError as e:
     if e.errno != errno.EEXIST:
         raise
+try:
+    os.makedirs("overlap/pkt")
+except OSError as e:
+    if e.errno != errno.EEXIST:
+        raise
 
 #logging
 logging.basicConfig(filename='g-sim.log',level=logging.DEBUG,format='%(asctime)s %(message)s')
@@ -79,24 +84,28 @@ if FILENAME:
     delay_normal_file = open("{}-delay_normal.csv".format(FILENAME),"w")
     grant_time_file = open("{}-grant_time.csv".format(FILENAME),"w")
     pkt_file = open("{}-pkt.csv".format(FILENAME),"w")
+    overlap_file = open("{}-overlap.csv".format(FILENAME),"w")
 elif DBA_ALGORITHM == "pd_dba":
     delay_file = open("csv/delay/{}-{}-{}-{}-{}-{}-{}-{}-{}-delay.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT,WINDOW,PREDICT),"w")
     delay_normal_file = open("csv/delay/{}-{}-{}-{}-{}-{}-{}-{}-{}-delay_normal.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT,WINDOW,PREDICT),"w")
     delay_prediction_file = open("csv/delay/{}-{}-{}-{}-{}-{}-{}-{}-{}-delay_pred.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT,WINDOW,PREDICT),"w")
     grant_time_file = open("csv/grant_time/{}-{}-{}-{}-{}-{}-{}-{}-{}-grant_time.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT,WINDOW,PREDICT),"w")
-    pkt_file = open("csv/pkt/{}-{}-{}-{}-{}-{}-{}-{}-{}-grant_time.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT,WINDOW,PREDICT),"w")
+    pkt_file = open("csv/pkt/{}-{}-{}-{}-{}-{}-{}-{}-{}-pkt.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT,WINDOW,PREDICT),"w")
+    overlap_file = open("csv/overlap/{}-{}-{}-{}-{}-{}-{}-{}-{}-overlap.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT,WINDOW,PREDICT),"w")
 else:
     delay_file = open("csv/delay/{}-{}-{}-{}-{}-{}-{}-delay.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT),"w")
     delay_normal_file = open("csv/delay/{}-{}-{}-{}-{}-{}-{}-delay_normal.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT),"w")
     delay_prediction_file = open("csv/delay/{}-{}-{}-{}-{}-{}-{}-delay_pred.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT),"w")
     grant_time_file = open("csv/grant_time/{}-{}-{}-{}-{}-{}-{}-grant_time.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT),"w")
     pkt_file = open("csv/pkt/{}-{}-{}-{}-{}-{}-{}-pkt.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT),"w")
+    overlap_file = open("csv/overlap/{}-{}-{}-{}-{}-{}-{}-overlap.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT),"w")
 
 delay_file.write("ONU_id,delay\n")
 delay_normal_file.write("ONU_id,delay\n")
 delay_prediction_file.write("ONU_id,delay\n")
 grant_time_file.write("source address,destination address,opcode,timestamp,counter,ONU_id,start,end\n")
 pkt_file.write("size\n")
+overlap_file.write("interval\n")
 
 mse_file = open("csv/{}-{}-{}-{}-{}-{}-{}-mse.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT),"w")
 mse_file.write("mse_start,mse_end\n")
@@ -356,7 +365,7 @@ class ONU(object):
             # real start and endtime used report to OLT
 
             self.excess = self.port.get_last_buffer_size() - grant['grant_size'] #update the excess
-            self.port.set_grant(grant) #grant info to onu port
+            self.port.set_grant(grant,False) #grant info to onu port
 
             sent_pkt = self.env.process(self.port.send(self.oid)) # send pkts during grant time
             yield sent_pkt # wait grant be used
@@ -389,7 +398,7 @@ class ONU(object):
                         pred_grant_usage_report.append(grant_usage)
                         #logging.debug("{}:pred={},usage={}".format(self.env.now,pred,grant_usage))
                     else:
-                        logging.debug("{}:Erro in pred_grant_usage".format(self.env.now))
+                        logging.debug("{}:Error in pred_grant_usage".format(self.env.now))
                         break
             # grant mean squared errors
             if len(pred_grant_usage_report) > 0 and len(pred_grant_usage_report) == len(grant['prediction']):
@@ -466,6 +475,7 @@ class PD_DBA(DBA):
         self.window = window    # past observations window size
         self.predict = predict # number of predictions
         self.grant_history = range(NUMBER_OF_ONUs) #grant history per ONU (training set)
+        self.predictions_array = []
         for i in range(NUMBER_OF_ONUs):
             # training unit
             self.grant_history[i] = {'counter': [], 'start': [], 'end': []}
@@ -478,30 +488,62 @@ class PD_DBA(DBA):
         self.model = MultiOutputRegressor(reg)
 
     def predictions_schedule(self,predictions):
+        predictions = map(list,predictions)
+        predictions_cp = list(predictions)
         if len(self.predictions_array) > 0:
             self.predictions_array = filter(lambda x: x[0] > self.env.now, self.predictions_array)
-        self.predictions_array +=  predictions
-        self.predictions_array.sort()
-        j = 1
-        for interval1 in self.predictions_array[:-1]:
-            for interval2 in self.predictions_array[j:]:
-                if interval1[1] > interval2[0]:
-                    if interval1 in predictions:
-                        index1 = self.predictions_array.index(interval1)
-                        index2 = predictions.index(interval1)
-                        new_interval = [ interval1[0] , interval2[0] - self.guard_interval ]
-                        predictions[ index2 ] = new_interval
-                        self.predictions_array[index1] = new_interval
+            # for interval1 in predictions:
+            #     for interval2 in self.predictions_array:
+            #         if interval2[1] > interval1[0]:
+            #             # print predictions
+            #             index = predictions.index(interval1)
+            #             new_interval = [ interval2[1] , interval1[1] ]
+            #             predictions_cp[ index ] = new_interval
+            #         elif interval1[1] > interval2[0]:
+            #             index = predictions.index(interval1)
+            #             new_interval = [ interval1[0] , interval2[0] ]
+            #             predictions_cp[ index ] = new_interval
+            # print predictions_cp
+            # time.sleep(5)
+            # predictions = predictions_cp
 
-                    else:
-                        index1 = self.predictions_array.index(interval2)
-                        index2 = predictions.index(interval2)
-                        new_interval = [ interval1[1] + self.guard_interval, interval2[1] ]
-                        predictions[ index2 ] = new_interval
-                        self.predictions_array[index1] = new_interval
+
+
+        # print self.predictions_array
+        # print ""
+        predictions_array_cp = list(self.predictions_array)
+        predictions_array_cp +=  predictions
+        predictions_array_cp.sort()
+        #self.predictions_array = sorted(self.predictions_array,key=lambda x: x[0])
+        # print self.predictions_array
+        # print "#########"
+        # time.sleep(5)
+
+        #self.predictions_array.sort()
+        j = 1
+        for interval1 in predictions_array_cp[:-1]:
+            for interval2 in predictions_array_cp[j:]:
+                if interval1[1] > interval2[0]:
+                    overlap_file.write("{}\n".format(interval1[1] - interval2[0]))
+                    if interval1 in predictions:
+                        #index1 = self.predictions_array.index(interval1)
+                        index = predictions.index(interval1)
+                        new_interval = [ interval1[0] , interval2[0]]
+                        predictions_cp[ index ] = new_interval
+                        #self.predictions_array[index1] = new_interval
+
+                    elif interval2 in predictions:
+                        #index1 = self.predictions_array.index(interval2)
+                        index = predictions.index(interval2)
+                        new_interval = [ interval1[1], interval2[1] ]
+                        predictions_cp[ index ] = new_interval
+                        #self.predictions_array[index1] = new_interval
                 else:
                     break
             j+=1
+
+        #predictions = predictions_cp
+        #self.predictions_array += predictions
         return predictions
 
 
@@ -522,6 +564,7 @@ class PD_DBA(DBA):
             pred = self.model.predict(X_pred) # predicting start and end
 
             predictions = list(pred)
+            predictions = self.predictions_schedule(predictions)
 
             return predictions
 
@@ -624,3 +667,4 @@ delay_prediction_file.close()
 grant_time_file.close()
 pkt_file.close()
 mse_file.close
+overlap_file.close()
