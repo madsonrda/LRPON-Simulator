@@ -108,7 +108,7 @@ pkt_file.write("size\n")
 overlap_file.write("interval\n")
 
 mse_file = open("csv/{}-{}-{}-{}-{}-{}-{}-mse.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT),"w")
-mse_file.write("mse_start,mse_end\n")
+mse_file.write("mse_start,mse_end,delay\n")
 
 class ODN(object):
     """This class represents optical distribution Network."""
@@ -213,6 +213,12 @@ class ONUPort(object):
         self.action = env.process(self.run())  # starts the run() method as a SimPy process
         self.pkt = None #network packet obj
         self.grant_loop = False #flag if grant time is being used
+        self.current_grant_delay = []
+
+    def get_current_grant_delay(self):
+        return self.current_grant_delay
+    def reset_curret_grant_delay(self):
+        self.current_grant_delay = []
 
     def set_grant(self,grant,pred=False): #setting grant byte size and its ending
         self.grant_size = grant['grant_size']
@@ -249,6 +255,9 @@ class ONUPort(object):
         self.grant_loop = True #flag if grant time is being used
         start_grant_usage = None #grant timestamp
         end_grant_usage = 0 #grant timestamp
+        why_break = "ok"
+
+        #self.current_grant_delay = []
 
         while self.grant_final_time > self.env.now:
 
@@ -258,6 +267,7 @@ class ONUPort(object):
 
             if (self.grant_final_time <= self.env.now):
                 #The grant time has expired
+                why_break ="time expired"
                 break
             if self.pkt is not None:
                 pkt = self.pkt
@@ -268,6 +278,7 @@ class ONUPort(object):
             else:
                 #there is no pkt to be sent
                 logging.debug("{}: there is no packet to be sent".format(self.env.now))
+                why_break = "no pkt"
                 break
             self.busy = 1
             self.byte_size -= pkt.size
@@ -275,6 +286,7 @@ class ONUPort(object):
                 logging.debug("{}: Negative buffer".format(self.env.now))
                 self.byte_size += pkt.size
                 self.buffer.put(pkt)
+                why_break = "negative buffer"
                 break
 
             bits = pkt.size * 8
@@ -285,12 +297,15 @@ class ONUPort(object):
                 self.byte_size += pkt.size
 
                 self.buffer.put(pkt)
+                why_break = "fragmentation"
                 break
 
             #write the pkt transmission delay
             delay_file.write( "{},{}\n".format( ONU_id, (self.env.now - pkt.time) ) )
+            self.current_grant_delay.append(self.env.now - pkt.time)
             if self.predicted_grant:
                 delay_prediction_file.write( "{},{}\n".format( ONU_id, (self.env.now - pkt.time) ) )
+
             else:
                 delay_normal_file.write( "{},{}\n".format( ONU_id, (self.env.now - pkt.time) ) )
 
@@ -303,8 +318,11 @@ class ONUPort(object):
 
         #ending of the grant
         self.grant_loop = False #flag if grant time is being used
-        if start_grant_usage:# if any pkt has been sent
+        if start_grant_usage and end_grant_usage > 0:# if any pkt has been sent
             #send the real grant usage
+            if end_grant_usage == 0:
+                print "merda"
+                print why_break
             self.grant_real_usage.put( [start_grant_usage , start_grant_usage + end_grant_usage] )
         else:
             #logging.debug("buffer_size:{}, grant duration:{}".format(b,grant_timeout))
@@ -376,6 +394,7 @@ class ONU(object):
 
             # Prediction stage
             if grant['prediction']:#check if have any predicion in the grant
+                self.port.reset_curret_grant_delay()
                 for pred in grant['prediction']:
                     # construct grant pkt
                     pred_grant = {'grant_size': grant['grant_size'], 'grant_final_time': pred[1]}
@@ -401,10 +420,20 @@ class ONU(object):
                         logging.debug("{}:Error in pred_grant_usage".format(self.env.now))
                         break
             # grant mean squared errors
-            if len(pred_grant_usage_report) > 0 and len(pred_grant_usage_report) == len(grant['prediction']):
-                mse_start = mse(np.array(pred_grant_usage_report)[:,0],np.array(grant['prediction'])[:,0])
-                mse_end = mse(np.array(pred_grant_usage_report)[:,1],np.array(grant['prediction'])[:,1])
-                mse_file.write("{},{}\n".format(mse_start,mse_end))
+            # if len(pred_grant_usage_report) > 0 and len(pred_grant_usage_report) != len(grant['prediction']):
+            #     logging.debug("{}:Error predictions len is diff of pred usage ({})".format(self.env.now, len(grant['prediction']) - len(pred_grant_usage_report) ))
+            if len(pred_grant_usage_report) > 0:
+                delay = self.port.get_current_grant_delay()
+                if len(delay) == 0:
+                    logging.debug("{}:Error in current grant delay".format(self.env.now))
+                    # print pred_grant_usage_report
+                    # print delay
+                    delay.append(-1)
+                len_usage = len(pred_grant_usage_report)
+                mse_start = mse(np.array(pred_grant_usage_report)[:,0],np.array(grant['prediction'][:len_usage])[:,0])
+                mse_end = mse(np.array(pred_grant_usage_report)[:,1],np.array(grant['prediction'][:len_usage])[:,1])
+                mse_file.write("{},{},{}\n".format(mse_start,mse_end,np.mean(delay)))
+            self.port.reset_curret_grant_delay()
             yield self.env.timeout(self.delay) # propagation delay
 
             #Signals the end of grant processing to allow new requests
@@ -520,11 +549,13 @@ class PD_DBA(DBA):
         # time.sleep(5)
 
         #self.predictions_array.sort()
+        over = False
         j = 1
         for interval1 in predictions_array_cp[:-1]:
             for interval2 in predictions_array_cp[j:]:
                 if interval1[1] > interval2[0]:
                     overlap_file.write("{}\n".format(interval1[1] - interval2[0]))
+                    over = True
                     if interval1 in predictions:
                         #index1 = self.predictions_array.index(interval1)
                         index = predictions.index(interval1)
@@ -542,8 +573,11 @@ class PD_DBA(DBA):
                     break
             j+=1
 
-        #predictions = predictions_cp
-        #self.predictions_array += predictions
+        if over:
+            predictions = None
+        else:
+            predictions = predictions_cp
+            self.predictions_array += predictions
         return predictions
 
 
