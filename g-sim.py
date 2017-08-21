@@ -320,9 +320,6 @@ class ONUPort(object):
         self.grant_loop = False #flag if grant time is being used
         if start_grant_usage and end_grant_usage > 0:# if any pkt has been sent
             #send the real grant usage
-            if end_grant_usage == 0:
-                print "merda"
-                print why_break
             self.grant_real_usage.put( [start_grant_usage , start_grant_usage + end_grant_usage] )
         else:
             #logging.debug("buffer_size:{}, grant duration:{}".format(b,grant_timeout))
