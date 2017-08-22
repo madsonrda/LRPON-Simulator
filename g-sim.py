@@ -71,7 +71,7 @@ except OSError as e:
     if e.errno != errno.EEXIST:
         raise
 try:
-    os.makedirs("overlap/pkt")
+    os.makedirs("csv/overlap")
 except OSError as e:
     if e.errno != errno.EEXIST:
         raise
@@ -406,7 +406,6 @@ class ONU(object):
 
                     self.port.set_grant(pred_grant,True) #grant info to onu port
                     sent_pkt = self.env.process(self.port.send(self.oid))#sending predicted messages
-
                     yield sent_pkt # wait grant be used
                     grant_usage = yield self.port.grant_real_usage.get() # get grant real utilisation
                     yield self.env.timeout(self.delay) # wait grant propagation delay
