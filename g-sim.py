@@ -594,7 +594,7 @@ class PD_DBA(DBA):
             pred = self.model.predict(X_pred) # predicting start and end
 
             predictions = list(pred)
-            predictions = self.predictions_schedule(predictions)
+            #predictions = self.predictions_schedule(predictions)
 
             return predictions
 
