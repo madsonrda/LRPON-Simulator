@@ -576,6 +576,24 @@ class PD_DBA(DBA):
             self.predictions_array += predictions
         return predictions
 
+    def drop_overlap(self,predictions,ONU):
+        predcp = list(predictions)
+        j = 1
+        #drop: if there are overlaps between the predictions
+        for p in predcp[:-1]:
+            for q in predcp[j:]:
+                if p[1] + ONU.delay  > q[0]:
+                    predictions = None
+                    break
+
+            j+=1
+        #drop: if there is overlap between standard grant and first prediction
+        if predictions is not None and (self.grant_history[ONU.oid]['end'][-1] +ONU.delay+ self.guard_interval) > predictions[0][0]:
+            predictions = None
+
+
+        return predictions
+
 
     def predictor(self, ONU_id):
         # check if there's enough observations to fill window
@@ -633,12 +651,16 @@ class PD_DBA(DBA):
                 self.grant_history[ONU.oid]['counter'].append( 1 )
 
             #PREDICTIONS
-            prediction = self.predictor(ONU.oid) # start predictor process
+            predictions = self.predictor(ONU.oid) # start predictor process
+
+            #drop if the predictions have overlap
+            if predictions is not None:
+                predictions = self.drop_overlap(predictions,ONU)
 
 
             #grant_time_file.write( "{},{},{}\n".format(ONU.oid,self.env.now,grant_final_time) )
             # construct grant message
-            grant = {'ONU':ONU,'grant_size': buffer_size, 'grant_final_time': grant_final_time, 'prediction': prediction}
+            grant = {'ONU':ONU,'grant_size': buffer_size, 'grant_final_time': grant_final_time, 'prediction': predictions}
 
             self.grant_store.put(grant) # send grant to OLT
 
