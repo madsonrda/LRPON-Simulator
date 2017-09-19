@@ -28,6 +28,7 @@ parser.add_argument("-s","--seed", type=int, default=20, help="Random seed")
 parser.add_argument("-w","--window", type=int, default=20, help="PD-DBA window")
 parser.add_argument("-p","--predict", type=int, default=20, help="PD-DBA predictions")
 parser.add_argument("-M","--model", type=str, default='ols', choices=["ols","ridge"] ,help="PD-DBA prediction model")
+parser.add_argument("-T","--traffic", type=str, default='poisson', choices=["poisson","cbr"] ,help="Traffic distribution")
 parser.add_argument("-o", "--output", type=str, default=None, help="Output file name")
 parser.add_argument("-t", "--time", type=int, default=30, help="The simulation duration in seconds")
 args = parser.parse_args()
@@ -45,12 +46,13 @@ RANDOM_SEED = args.seed
 WINDOW = args.window
 PREDICT = args.predict
 MODEL = args.model
+TRAFFIC = args.traffic
 SIM_DURATION = args.time
 
 
 
 #settings
-PKT_SIZE = 9000
+PKT_SIZE = 1500
 MAC_TABLE = {}
 Grant_ONU_counter = {}
 
@@ -164,18 +166,39 @@ class Packet(object):
 
 class PacketGenerator(object):
     """This class represents the packet generation process """
-    def __init__(self, env, id,  adist, sdist, fix_pkt_size=None, finish=float("inf")):
+    def __init__(self, env, id, fix_pkt_size=1500, finish=float("inf")):
         self.id = id # packet id
         self.env = env # Simpy Environment
-        self.arrivals_dist = adist #packet arrivals distribution
-        self.size_dist = sdist #packet size distribution
-
         self.fix_pkt_size = fix_pkt_size # Fixed packet size
         self.finish = finish # packe end time
         self.out = None # packet generator output
         self.packets_sent = 0 # packet counter
         self.action = env.process(self.run())  # starts the run() method as a SimPy process
 
+
+class CBR_PG(PacketGenerator):
+    """This class represents the Constant Bit Rate packet generation process """
+    def __init__(self,env, id, fix_pkt_size,interval=0.001):
+        self.interval = interval
+        PacketGenerator.__init__(self,env, id, fix_pkt_size)
+    def run(self):
+        """The generator function used in simulations.
+        """
+        while self.env.now < self.finish:
+            # wait for next transmission
+            yield self.env.timeout(self.interval)
+            self.packets_sent += 1
+            if self.fix_pkt_size:
+                p = Packet(self.env.now, self.fix_pkt_size, self.packets_sent, src=self.id)
+                pkt_file.write("{}\n".format(self.fix_pkt_size))
+            self.out.put(p) # put the packet in ONU port
+
+class poisson_PG(PacketGenerator):
+    """This class represents the poisson distribution packet generation process """
+    def __init__(self,env, id, adist, sdist, fix_pkt_size):
+        self.arrivals_dist = adist #packet arrivals distribution
+        self.size_dist = sdist #packet size distribution
+        PacketGenerator.__init__(self,env, id, fix_pkt_size, finish=float("inf"))
     def run(self):
         """The generator function used in simulations.
         """
@@ -193,6 +216,7 @@ class PacketGenerator(object):
                 p = Packet(self.env.now, size, self.packets_sent, src=self.id)
                 pkt_file.write("{}\n".format(size))
             self.out.put(p) # put the packet in ONU port
+
 
 class ONUPort(object):
 
@@ -351,7 +375,7 @@ class ONUPort(object):
             self.buffer.put(pkt)
 
 class ONU(object):
-    def __init__(self,distance,oid,env,odn,exp,qlimit,fix_pkt_size,bucket):
+    def __init__(self,distance,oid,env,odn,qlimit,bucket,packet_gen,pg_param):
         self.env = env
         self.grant_report_store = simpy.Store(self.env) #Simpy Stores grant usage report
         self.grant_report = []
@@ -359,9 +383,7 @@ class ONU(object):
         self.oid = oid #ONU indentifier
         self.delay = self.distance/ float(210000) # fiber propagation delay
         self.excess = 0 #difference between the size of the request and the grant
-        arrivals_dist = functools.partial(random.expovariate, exp) #packet arrival distribuition
-        size_dist = functools.partial(random.expovariate, 0.1)  # packet size distribuition, mean size 100 bytes
-        self.pg = PacketGenerator(self.env, "bbmp", arrivals_dist, size_dist,fix_pkt_size) #creates the packet generator
+        self.pg = packet_gen(self.env, "bbmp", **pg_param) #creates the packet generator
         if qlimit == 0:# checks if the queue has a size limit
             queue_limit = None
         else:
@@ -403,7 +425,7 @@ class ONU(object):
                     except Exception as e:
                         logging.debug("{}: pred {}, gf {}".format(self.env.now,pred,grant['grant_final_time']))
                         logging.debug("Error while waiting for the next grant ({})".format(e))
-                        break
+                        breakpacket_gen = Exponential_PG
 
                     self.port.set_grant(pred_grant,True) #grant info to onu port
                     sent_pkt = self.env.process(self.port.send(self.oid))#sending predicted messages
@@ -697,20 +719,33 @@ class OLT(object):
             self.env.process(self.dba.dba(request['ONU'],request['buffer_size']))
 
 
-#starts the simulator
+#starts the simulator environment
 random.seed(RANDOM_SEED)
 env = simpy.Environment()
-odn = ODN(env)
-ONU_List = []
 
+#creates the optical distribution network
+odn = ODN(env)
+
+#Packet generator
+if TRAFFIC == "poisson":
+    packet_gen = poisson_PG
+    pg_param = {"adist":functools.partial(random.expovariate, EXPONENT), "sdist":None, "fix_pkt_size":PKT_SIZE}
+else:
+    packet_gen = CBR_PG
+    pg_param = {"fix_pkt_size":PKT_SIZE}
+
+
+#Creates the ONUs
+ONU_List = []
 for i in range(NUMBER_OF_ONUs):
     MAC_TABLE[i] = "00:00:00:00:{}:{}".format(random.randint(0x00, 0xff),random.randint(0x00, 0xff))
     Grant_ONU_counter[i] = 0
 MAC_TABLE['olt'] = "ff:ff:ff:ff:00:01"
 for i in range(NUMBER_OF_ONUs):
     distance= DISTANCE
-    ONU_List.append(ONU(distance,i,env,odn,EXPONENT,ONU_QUEUE_LIMIT,PKT_SIZE,MAX_BUCKET_SIZE))
+    ONU_List.append(ONU(distance,i,env,odn,ONU_QUEUE_LIMIT,MAX_BUCKET_SIZE,packet_gen,pg_param))
 
+#creates OLT
 olt = OLT(env,odn,MAX_GRANT_SIZE,DBA_ALGORITHM,WINDOW,PREDICT,MODEL)
 logging.info("starting simulator")
 env.run(until=SIM_DURATION)
