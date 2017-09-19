@@ -29,6 +29,7 @@ parser.add_argument("-w","--window", type=int, default=20, help="PD-DBA window")
 parser.add_argument("-p","--predict", type=int, default=20, help="PD-DBA predictions")
 parser.add_argument("-M","--model", type=str, default='ols', choices=["ols","ridge"] ,help="PD-DBA prediction model")
 parser.add_argument("-o", "--output", type=str, default=None, help="Output file name")
+parser.add_argument("-t", "--time", type=int, default=30, help="The simulation duration in seconds")
 args = parser.parse_args()
 
 #Arguments
@@ -44,11 +45,11 @@ RANDOM_SEED = args.seed
 WINDOW = args.window
 PREDICT = args.predict
 MODEL = args.model
+SIM_DURATION = args.time
 
 
 
 #settings
-SIM_DURATION = 30
 PKT_SIZE = 9000
 MAC_TABLE = {}
 Grant_ONU_counter = {}
