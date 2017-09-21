@@ -107,7 +107,7 @@ delay_file.write("ONU_id,delay\n")
 delay_normal_file.write("ONU_id,delay\n")
 delay_prediction_file.write("ONU_id,delay\n")
 grant_time_file.write("source address,destination address,opcode,timestamp,counter,ONU_id,start,end\n")
-pkt_file.write("size\n")
+pkt_file.write("timestamp,size\n")
 overlap_file.write("interval\n")
 
 mse_file = open("csv/{}-{}-{}-{}-{}-{}-{}-mse.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT),"w")
@@ -190,7 +190,7 @@ class CBR_PG(PacketGenerator):
             self.packets_sent += 1
             if self.fix_pkt_size:
                 p = Packet(self.env.now, self.fix_pkt_size, self.packets_sent, src=self.id)
-                pkt_file.write("{}\n".format(self.fix_pkt_size))
+                pkt_file.write("{},{}\n".format(self.env.now,self.fix_pkt_size))
             self.out.put(p) # put the packet in ONU port
 
 class poisson_PG(PacketGenerator):
@@ -210,11 +210,11 @@ class poisson_PG(PacketGenerator):
 
             if self.fix_pkt_size:
                 p = Packet(self.env.now, self.fix_pkt_size, self.packets_sent, src=self.id)
-                pkt_file.write("{}\n".format(self.fix_pkt_size))
+                pkt_file.write("{},{}\n".format(self.env.now,self.fix_pkt_size))
             else:
                 size = self.size_dist()
                 p = Packet(self.env.now, size, self.packets_sent, src=self.id)
-                pkt_file.write("{}\n".format(size))
+                pkt_file.write("{},{}\n".format(self.env.now,size))
             self.out.put(p) # put the packet in ONU port
 
 
