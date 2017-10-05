@@ -236,7 +236,7 @@ class SubStream(object):
                 p = Packet(self.env.now, self.size, self.packets_sent, src=self.id)
                 pkt_file.write("{}\n".format(self.size))
                 # bits = pkt.size * 8
-                # sending_time = 	bits/float(1000000000)
+                # sending_time = 	bits/float(10000000)
 
 
 
@@ -244,7 +244,7 @@ class SelfSimilar(PacketGenerator):
     """This class represents the self-similar packet generation process """
     def __init__(self,env, id, on_dist, off_dist, fix_pkt_size):
         PacketGenerator.__init__(self,env, id)
-        self.subStramAggregator = simpy.Store(env)# sub-streams traffic aggregator
+        self.SubStreamAggregator = simpy.Store(env)# sub-streams traffic aggregator
 
 
     def run(self):
