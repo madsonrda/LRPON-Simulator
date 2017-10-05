@@ -234,9 +234,13 @@ class SubStream(object):
             while self.env.now <= on_period:
                 self.packets_sent += 1
                 p = Packet(self.env.now, self.size, self.packets_sent, src=self.id)
-                pkt_file.write("{}\n".format(self.size))
-                # bits = pkt.size * 8
-                # sending_time = 	bits/float(10000000)
+                pkt_file.write("{},{},{}\n".format(self.env.now,on_period,size))
+                bits = p.size * 8
+                sending_time = 	bits/float(10000000)
+                yield self.env.timeout(sending_time)
+                self.aggregator.put(p)
+            off_period = self.off()/1000
+            self.env.timeout(off_period)
 
 
 
