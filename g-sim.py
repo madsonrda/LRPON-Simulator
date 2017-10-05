@@ -249,12 +249,15 @@ class SelfSimilar(PacketGenerator):
     def __init__(self,env, id, on_dist, off_dist, fix_pkt_size):
         PacketGenerator.__init__(self,env, id)
         self.SubStreamAggregator = simpy.Store(env)# sub-streams traffic aggregator
+        for size in range(64,1519,64):
+            SubStream(env, on_dist, off_dist,self.SubStreamAggregator,size)
 
 
     def run(self):
         """The generator function used in simulations.
         """
         while self.env.now < self.finish:
+            pkt = yield self.SubStreamAggregator.get() #get a request message
 
 class ONUPort(object):
 
@@ -424,7 +427,7 @@ class ONU(object):
         self.pg = packet_gen(self.env, "bbmp", **pg_param) #creates the packet generator
         if qlimit == 0:# checks if the queue has a size limit
             queue_limit = None
-        else:
+        else:request = yield odn.get_request() #get a request message
             queue_limit = qlimit
         self.port = ONUPort(self.env, qlimit=queue_limit)#create ONU PORT
         self.pg.out = self.port #forward packet generator output to ONU port
