@@ -217,6 +217,39 @@ class poisson_PG(PacketGenerator):
                 pkt_file.write("{}\n".format(size))
             self.out.put(p) # put the packet in ONU port
 
+class SubStream(object):
+    """This class represents the sub-streams which will be aggregated by the SelfSimilar class"""
+    def __init__(self,env, on_dist, off_dist,aggregator,size):
+        self.on = on_dist #packet arrivals ON distribution
+        self.off = off_dist #packet arrivals ON distribution
+        self.aggregator = aggregator
+        self.size = size
+        self.packets_sent = 0 # packet counter
+        self.action = env.process(self.run())  # starts the run() method as a SimPy process
+
+    def run(self):
+        while True:
+            on_period = self.env.now + (self.on()/1000)
+            while self.env.now <= on_period:
+                self.packets_sent += 1
+                p = Packet(self.env.now, self.size, self.packets_sent, src=self.id)
+                pkt_file.write("{}\n".format(self.size))
+                # bits = pkt.size * 8
+                # sending_time = 	bits/float(1000000000)
+
+
+
+class SelfSimilar(PacketGenerator):
+    """This class represents the self-similar packet generation process """
+    def __init__(self,env, id, on_dist, off_dist, fix_pkt_size):
+        PacketGenerator.__init__(self,env, id)
+        self.subStramAggregator = simpy.Store(env)# sub-streams traffic aggregator
+
+
+    def run(self):
+        """The generator function used in simulations.
+        """
+        while self.env.now < self.finish:
 
 class ONUPort(object):
 
