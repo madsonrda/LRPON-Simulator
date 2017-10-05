@@ -23,7 +23,7 @@ parser.add_argument("-b", "--bucket", type=int, default=27000, help="The size of
 parser.add_argument("-Q", "--qlimit", type=int, default=None ,help="The size of the ONU port queue in bytes")
 parser.add_argument("-m", "--maxgrant", type=float, default=0, help="The maximum size of buffer which a grant can allow")
 parser.add_argument("-d","--distance", type=int, default=100, nargs='?', help="Distance in km from ONU to OLT")
-parser.add_argument("-e","--exponent", type=int, default=2320, nargs='?', help="Packet arrivals distribution exponent")
+parser.add_argument("-e","--exponent", type=float, default=2320, nargs='?', help="Packet arrivals distribution exponent")
 parser.add_argument("-s","--seed", type=int, default=20, help="Random seed")
 parser.add_argument("-w","--window", type=int, default=20, help="PD-DBA window")
 parser.add_argument("-p","--predict", type=int, default=20, help="PD-DBA predictions")
@@ -107,7 +107,7 @@ delay_file.write("ONU_id,delay\n")
 delay_normal_file.write("ONU_id,delay\n")
 delay_prediction_file.write("ONU_id,delay\n")
 grant_time_file.write("source address,destination address,opcode,timestamp,counter,ONU_id,start,end\n")
-pkt_file.write("timestamp,size\n")
+pkt_file.write("timestamp,adist,size\n")
 overlap_file.write("interval\n")
 
 mse_file = open("csv/{}-{}-{}-{}-{}-{}-{}-mse.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT),"w")
@@ -190,7 +190,7 @@ class CBR_PG(PacketGenerator):
             self.packets_sent += 1
             if self.fix_pkt_size:
                 p = Packet(self.env.now, self.fix_pkt_size, self.packets_sent, src=self.id)
-                pkt_file.write("{},{}\n".format(self.env.now,self.fix_pkt_size))
+                pkt_file.write("{},{},{}\n".format(self.env.now,self.interval,self.fix_pkt_size))
             self.out.put(p) # put the packet in ONU port
 
 class poisson_PG(PacketGenerator):
@@ -204,17 +204,18 @@ class poisson_PG(PacketGenerator):
         """
         while self.env.now < self.finish:
             # wait for next transmission
-            yield self.env.timeout(self.arrivals_dist())
+            arrival = self.arrivals_dist()
+            yield self.env.timeout(arrival)
             self.packets_sent += 1
 
 
             if self.fix_pkt_size:
                 p = Packet(self.env.now, self.fix_pkt_size, self.packets_sent, src=self.id)
-                pkt_file.write("{},{}\n".format(self.env.now,self.fix_pkt_size))
+                pkt_file.write("{},{},{}\n".format(self.env.now,arrival,self.fix_pkt_size))
             else:
                 size = self.size_dist()
                 p = Packet(self.env.now, size, self.packets_sent, src=self.id)
-                pkt_file.write("{},{}\n".format(self.env.now,size))
+                pkt_file.write("{},{},{}\n".format(self.env.now,arrival,size))
             self.out.put(p) # put the packet in ONU port
 
 
