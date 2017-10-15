@@ -117,29 +117,31 @@ class ODN(object):
     """This class represents optical distribution Network."""
     def __init__(self, env):
         self.env = env
-        self.upstream = simpy.Store(env) # upstream chanel
+        self.upstream = []# upstream chanel
         self.downstream = [] # downstream chanel
         #create downstream splitter
         for i in range(NUMBER_OF_ONUs):
             self.downstream.append(simpy.Store(env))
+        for i in range(NUMBER_OF_OLTs):
+            self.upstream.append(simpy.Store(env))
 
-    def up_latency(self, value,delay):
+    def up_latency(self, value,ONU):
         """Calculates upstream propagation delay."""
-        yield self.env.timeout(delay)
-        self.upstream.put(value)
+        yield self.env.timeout(ONU.delay)
+        self.upstream[ONU.lamb].put(value)
 
     def down_latency(self,ONU,value):
         """Calculates downstream propagation delay."""
         yield self.env.timeout(ONU.delay)
         self.downstream[ONU.oid].put(value)
 
-    def put_request(self, value,delay):
+    def put_request(self, value,ONU):
         """ONU Puts the Request message in the upstream """
-        self.env.process(self.up_latency(value,delay))
+        self.env.process(self.up_latency(value,ONU))
 
-    def get_request(self):
+    def get_request(self,lamb):
         """OLT gets the Request message from upstream  """
-        return self.upstream.get()
+        return self.upstream[lamb].get()
 
     def put_grant(self,ONU,value):
         """OLT Puts the Grant message in the downstream """
