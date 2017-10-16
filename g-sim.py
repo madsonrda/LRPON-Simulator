@@ -415,7 +415,7 @@ class ONUPort(object):
             self.buffer.put(pkt)
 
 class ONU(object):
-    def __init__(self,distance,oid,env,odn,qlimit,bucket,packet_gen,pg_param):
+    def __init__(self,distance,oid,env,odn,qlimit,bucket,packet_gen,pg_param,lamb):
         self.env = env
         self.grant_report_store = simpy.Store(self.env) #Simpy Stores grant usage report
         self.grant_report = []
@@ -433,6 +433,7 @@ class ONU(object):
         self.sender = self.env.process(self.ONU_sender(odn))
         self.receiver = self.env.process(self.ONU_receiver(odn))
         self.bucket = bucket #Bucket size
+        self.lamb = lamb # wavelength lambda
 
 
     def ONU_receiver(self,odn):
@@ -509,7 +510,7 @@ class ONU(object):
                 # creating request message
                 msg = {'text':"ONU %s sent this REQUEST for %.6f at %f" %
                     (self.oid,self.port.byte_size, self.env.now),'buffer_size':requested_buffer,'ONU':self}
-                odn.put_request((msg),self.delay)# put the request message in the odn
+                odn.put_request((msg),self)# put the request message in the odn
 
                 # Wait for the grant processing to send the next request
                 self.grant_report = yield self.grant_report_store.get()
