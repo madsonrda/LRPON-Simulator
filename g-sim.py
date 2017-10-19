@@ -556,6 +556,23 @@ class IPACT(DBA):
             # timeout until the end of grant to then get next grant request
             yield self.env.timeout(delay+grant_time + self.guard_interval)
 
+class MTP(DBA):
+    def __init__(self,env,max_grant_size,grant_store):
+        DBA.__init__(self,env,max_grant_size,grant_store)
+
+class MTP_THREAD(object):
+    def __init__(self,env,numberONU,Bmin,MaxThreadTime):
+        self.env = env
+        self.numberONU = numberONU
+        self.requestList = []
+        for i in range(self.numberONU):
+            self.requestList.append({'status':0,'msg':None})
+        self.excess = 0
+        self.lowLoadList = [] #ONU_id,
+        self.highLoadList = [] #tuple ONU_id, excess
+        self.cycleStart = self.env.now
+        self.cycleEnd = self.cycleStart + MaxThreadTime
+
 
 class PD_DBA(DBA):
     def __init__(self,env,max_grant_size,grant_store,window=20,predict=5,model="ols"):
