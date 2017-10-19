@@ -28,7 +28,7 @@ parser.add_argument("-s","--seed", type=int, default=20, help="Random seed")
 parser.add_argument("-w","--window", type=int, default=20, help="PD-DBA window")
 parser.add_argument("-p","--predict", type=int, default=20, help="PD-DBA predictions")
 parser.add_argument("-M","--model", type=str, default='ols', choices=["ols","ridge"] ,help="PD-DBA prediction model")
-parser.add_argument("-T","--traffic", type=str, default='poisson', choices=["poisson","cbr"] ,help="Traffic distribution")
+parser.add_argument("-T","--traffic", type=str, default='poisson', choices=["poisson","cbr","pareto"] ,help="Traffic distribution")
 parser.add_argument("-o", "--output", type=str, default=None, help="Output file name")
 parser.add_argument("-t", "--time", type=int, default=30, help="The simulation duration in seconds")
 args = parser.parse_args()
@@ -220,7 +220,9 @@ class poisson_PG(PacketGenerator):
 
 class SubStream(object):
     """This class represents the sub-streams which will be aggregated by the SelfSimilar class"""
-    def __init__(self,env, on_dist, off_dist,aggregator,size):
+    def __init__(self,env, id, on_dist, off_dist,aggregator,size):
+        self.env = env
+        self.id = id
         self.on = on_dist #packet arrivals ON distribution
         self.off = off_dist #packet arrivals ON distribution
         self.aggregator = aggregator
@@ -233,14 +235,15 @@ class SubStream(object):
             on_period = self.env.now + (self.on()/1000)
             while self.env.now <= on_period:
                 self.packets_sent += 1
-                p = Packet(self.env.now, self.size, self.packets_sent, src=self.id)
-                pkt_file.write("{},{},{}\n".format(self.env.now,on_period,size))
+                p = Packet(self.env.now, self.size, self.packets_sent, src=self.size)
+                pkt_file.write("{},{},{}\n".format(self.env.now,on_period,self.size))
                 bits = p.size * 8
                 sending_time = 	bits/float(10000000)
                 yield self.env.timeout(sending_time)
                 self.aggregator.put(p)
             off_period = self.off()/1000
             self.env.timeout(off_period)
+            print "wake on : {}".format(self.env.now)
 
 
 
@@ -250,14 +253,16 @@ class SelfSimilar(PacketGenerator):
         PacketGenerator.__init__(self,env, id)
         self.SubStreamAggregator = simpy.Store(env)# sub-streams traffic aggregator
         for size in range(64,1519,64):
-            SubStream(env, on_dist, off_dist,self.SubStreamAggregator,size)
+            SubStream(env,id, on_dist, off_dist,self.SubStreamAggregator,size)
 
 
     def run(self):
         """The generator function used in simulations.
         """
         while self.env.now < self.finish:
-            pkt = yield self.SubStreamAggregator.get() #get a request message
+            pkt = yield self.SubStreamAggregator.get() #get a pkt from SubStream
+            #print pkt
+            self.out.put(pkt) # put the packet in ONU port
 
 class ONUPort(object):
 
@@ -277,7 +282,7 @@ class ONUPort(object):
         self.last_buffer_size = 0 # size of the last buffer request
         self.busy = 0  # Used to track if a packet is currently being sent
         self.action = env.process(self.run())  # starts the run() method as a SimPy process
-        self.pkt = None #network packet obj
+        self.pkt = None #network packet src=self.idobj
         self.grant_loop = False #flag if grant time is being used
         self.current_grant_delay = []
 
@@ -427,7 +432,7 @@ class ONU(object):
         self.pg = packet_gen(self.env, "bbmp", **pg_param) #creates the packet generator
         if qlimit == 0:# checks if the queue has a size limit
             queue_limit = None
-        else:request = yield odn.get_request() #get a request message
+        else:
             queue_limit = qlimit
         self.port = ONUPort(self.env, qlimit=queue_limit)#create ONU PORT
         self.pg.out = self.port #forward packet generator output to ONU port
@@ -771,6 +776,10 @@ odn = ODN(env)
 if TRAFFIC == "poisson":
     packet_gen = poisson_PG
     pg_param = {"adist":functools.partial(random.expovariate, EXPONENT), "sdist":None, "fix_pkt_size":PKT_SIZE}
+elif TRAFFIC == "pareto":
+    packet_gen = SelfSimilar
+    pg_param = {"on_dist":functools.partial(np.random.pareto, 1.4), "off_dist":functools.partial(np.random.pareto, 1.2), "fix_pkt_size":PKT_SIZE}
+
 else:
     packet_gen = CBR_PG
     pg_param = {"fix_pkt_size":PKT_SIZE}
