@@ -573,6 +573,15 @@ class MTP_THREAD(object):
         self.cycleStart = self.env.now
         self.cycleEnd = self.cycleStart + MaxThreadTime
 
+    def setCycleStart(self,start):
+        self.cycleStart = start
+    def getCycleStart(self):
+        return self.cycleStart
+    def setCycleEnd(self,start):
+        self.cycleEnd = end
+    def getCycleEnd(self):
+        return self.cycleEnd
+
 
 class PD_DBA(DBA):
     def __init__(self,env,max_grant_size,grant_store,window=20,predict=5,model="ols"):
