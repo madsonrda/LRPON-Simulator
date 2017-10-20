@@ -561,11 +561,12 @@ class MTP(DBA):
         DBA.__init__(self,env,max_grant_size,grant_store)
 
 class MTP_THREAD(object):
-    def __init__(self,env,numberONU,Bmin,MaxThreadTime):
+    def __init__(self,env,tNumber,numberONUs,Bmin,MaxThreadTime,grant_store):
         self.env = env
-        self.numberONU = numberONU
+        self.threadNumber = tNumber
+        self.numberONUs = numberONUs
         self.requestList = []
-        for i in range(self.numberONU):
+        for i in range(self.numberONUs):
             self.requestList.append({'status':0,'msg':None})
         self.excess = 0
         self.lowLoadList = [] #ONU_id,
