@@ -624,13 +624,33 @@ class MTP_THREAD(object):
                 if bandw >= 0:
                     self.grantList.append([lowLoad[0],self.Bmin])
                     self.excess -= lowLoad[1]
-                    updateNextTHRequestList.append([lowLoad[0],bandw])
+                    updateNextTHRequestList.append([lowLoad[0],-1*(lowLoad[1])])
                 else:
                     self.grantList.append( [lowLoad[0],
                         self.requestList[lowLoad[0]]['buffer_size'] + NextTHRequest[lowLoad[0]]['buffer_size'] )
                     self.excess -= NextTHRequest[lowLoad[0]]['buffer_size']
-                    updateNextTHRequestList.append([lowLoad[0],0])
-
+                    updateNextTHRequestList.append([lowLoad[0],
+                        -1*(NextTHRequest[lowLoad[0]]['buffer_size'])])
+        self.interTh_store.put({'threadNumber':self.threadNumber,'msg':'updateNextTHRequest','data':updateNextTHRequestList})
+        #distributing excess
+        if self.excess < 0:
+            print "DEU MERDA"
+        if self.excess > 0:
+            highloadbuffer = 0
+            updateNextTHRequestList = []
+            excessDistributionList = []
+            for highload in self.highLoadList:
+                highloadbuffer += highload[1]
+            for highload in self.highLoadList:
+                bandw = (highload[1]*self.excess)/float(highloadbuffer)
+                excessDistributionList.append([highload[0],bandw])
+            for i,excess_dist in enumerate(xcessDistributionList):
+                self.grantList.append([excess_dist[0],
+                    self.Bmin+excess_dist[1]])
+                self.updateNextTHRequestList([excess_dist[0],
+                        highLoadList[i][1]-excess_dist[1]])
+            self.interTh_store.put({'threadNumber':self.threadNumber,'msg':'updateNextTHRequest','data':updateNextTHRequestList})
+            
 
 
 
