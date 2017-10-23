@@ -561,18 +561,24 @@ class MTP(DBA):
         DBA.__init__(self,env,max_grant_size,grant_store)
 
 class MTP_THREAD(object):
-    def __init__(self,env,tNumber,numberONUs,Bmin,MaxThreadTime,grant_store):
+    def __init__(self,env,tNumber,numberONUs,Bmin,MaxThreadTime,grant_store,interTh_store):
         self.env = env
         self.threadNumber = tNumber
         self.numberONUs = numberONUs
+        self.Bmin = Bmin
+        self.request_counter = 0
         self.requestList = []
         for i in range(self.numberONUs):
-            self.requestList.append({'status':0,'msg':None})
+            self.requestList.append({'status':0,'buffer_size':None})
         self.excess = 0
         self.lowLoadList = [] #ONU_id,
         self.highLoadList = [] #tuple ONU_id, excess
         self.cycleStart = self.env.now
         self.cycleEnd = self.cycleStart + MaxThreadTime
+        self.grant_store = grant_store
+        self.interTh_store = interTh_store
+        self.request_store = simpy.Store(self.env)
+        self.reqGathering_ends = self.env.event()
 
     def setCycleStart(self,start):
         self.cycleStart = start
@@ -582,6 +588,28 @@ class MTP_THREAD(object):
         self.cycleEnd = end
     def getCycleEnd(self):
         return self.cycleEnd
+
+    def RequestManager(self):
+        while True:
+            ONU,buffer_size = yield self.request_store.get()
+            if self.requestList[ONU.oid]['status'] == 0:
+                self.requestList[ONU.oid]['status'] = 1
+                self.requestList[ONU.oid]['buffer_size'] = buffer_size
+                self.request_counter+=1
+            else:
+                print "erro request repetido"
+            if self.request_counter == self.numberONUs:
+                self.reqGathering_ends.succeed()
+                self.reqGathering_ends = self.env.event()
+    def dba(self):
+        #Split high load ONUs
+        for oid,req in enumerate(self.requestList):
+            bandw = self.Bmin - req['buffer_size']
+            if bandw < 0:
+                self.highLoadList.append([oid,-1*(bandw)])
+            else:
+                self.excess += bandw
+
 
 
 class PD_DBA(DBA):
