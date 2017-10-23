@@ -568,6 +568,7 @@ class MTP_THREAD(object):
         self.Bmin = Bmin
         self.request_counter = 0
         self.requestList = []
+        self.grantList = []
         for i in range(self.numberONUs):
             self.requestList.append({'status':0,'buffer_size':None})
         self.excess = 0
@@ -576,8 +577,9 @@ class MTP_THREAD(object):
         self.cycleStart = self.env.now
         self.cycleEnd = self.cycleStart + MaxThreadTime
         self.grant_store = grant_store
-        self.interTh_store = interTh_store
-        self.request_store = simpy.Store(self.env)
+        self.interTh_store = interTh_store #sends msg to ThreaddbaManager
+        self.request_store = simpy.Store(self.env) #receives request from ThreaddbaManager
+        self.NextTHRequest_store = simpy.Store(self.env) #receives NextTHRequestList from ThreaddbaManager
         self.reqGathering_ends = self.env.event()
 
     def setCycleStart(self,start):
@@ -609,6 +611,26 @@ class MTP_THREAD(object):
                 self.highLoadList.append([oid,-1*(bandw)])
             else:
                 self.excess += bandw
+                self.lowLoadList.append([oid,bandw])
+        #check valid requests in next thread
+        self.interTh_store.put({'threadNumber':self.threadNumber,'msg':'getNextTHRequest','data':None})
+        NextTHRequest = yield self.NextTHRequest_store.get()
+        updateNextTHRequestList = []
+        for lowLoad in self.lowLoadList:
+            if NextTHRequest[lowLoad[0]]['status'] == 1:
+                bandw = NextTHRequest[lowLoad[0]]['buffer_size'] - lowLoad[1]
+                if NextTHRequest[lowLoad[0]]['buffer_size'] <=0:
+                    print "ALGO MUITO ERRADO"
+                if bandw >= 0:
+                    self.grantList.append([lowLoad[0],self.Bmin])
+                    self.excess -= lowLoad[1]
+                    updateNextTHRequestList.append([lowLoad[0],bandw])
+                else:
+                    self.grantList.append( [lowLoad[0],
+                        self.requestList[lowLoad[0]]['buffer_size'] + NextTHRequest[lowLoad[0]]['buffer_size'] )
+                    self.excess -= NextTHRequest[lowLoad[0]]['buffer_size']
+                    updateNextTHRequestList.append([lowLoad[0],0])
+
 
 
 
