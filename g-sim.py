@@ -557,45 +557,66 @@ class IPACT(DBA):
             yield self.env.timeout(delay+grant_time + self.guard_interval)
 
 class MTP(DBA):
-    def __init__(self,env,max_grant_size,grant_store):
+    def __init__(self,env,max_grant_size,grant_store,numberONUs,NThreads=2):
         DBA.__init__(self,env,max_grant_size,grant_store)
+        self.interTh_store = simpy.Store(self.env)
+        self.ThreadList = []
+        #create threads
+        for i in range(NThreads):
+            self.ThreadList.append(MTP_THREAD(env,i,numberONUs,self.guard_interval,max_grant_size,grant_store,self.interTh_store))
+        self.currentThread = 0
+        self.nextThread = 1
+
+    def dba(self,ONU,buffer_size):
+        status = self.ThreadList[self.currentThread].getRequestStatus(ONU.oid)
+        if status == 0:
+            yield self.ThreadList[self.currentThread].request_store.put((ONU,buffer_size))
+        else:
+            yield self.ThreadList[self.nexThread].request_store.put((ONU,buffer_size))
+
 
 class MTP_THREAD(object):
-    def __init__(self,env,tNumber,numberONUs,Bmin,MaxThreadTime,grant_store,interTh_store):
+    def __init__(self,env,tNumber,numberONUs,guard_interval,Bmin,grant_store,interTh_store):
         self.env = env
         self.threadNumber = tNumber
         self.numberONUs = numberONUs
+        self.guard_interval = guard_interval
         self.Bmin = Bmin
         self.request_counter = 0
         self.requestList = []
         self.grantList = []
-        for i in range(self.numberONUs):
-            self.requestList.append({'status':0,'buffer_size':None})
+        for i in range(self.numberONUs):s
+            self.requestList.append({'status':0,'ONU':None,'buffer_size':None})
         self.excess = 0
         self.lowLoadList = [] #ONU_id,
         self.highLoadList = [] #tuple ONU_id, excess
         self.cycleStart = self.env.now
-        self.cycleEnd = self.cycleStart + MaxThreadTime
+        #self.cycleEnd = self.cycleStart + self.Bmin*(self.numberONUs)
         self.grant_store = grant_store
         self.interTh_store = interTh_store #sends msg to ThreaddbaManager
         self.request_store = simpy.Store(self.env) #receives request from ThreaddbaManager
         self.NextTHRequest_store = simpy.Store(self.env) #receives NextTHRequestList from ThreaddbaManager
         self.reqGathering_ends = self.env.event()
+        self.RequestManager_proc = self.env.process(self.RequestManager())
+        self.dba_proc = self.env.process(self.dba())
 
+    def getRequestStatus(self,ONU_id):
+        return self.requestList[ONU_id]['status']
     def setCycleStart(self,start):
         self.cycleStart = start
     def getCycleStart(self):
         return self.cycleStart
-    def setCycleEnd(self,start):
-        self.cycleEnd = end
-    def getCycleEnd(self):
-        return self.cycleEnd
+    # def setCycleEnd(self,start):
+    #     self.cycleEnd = end
+    # def getCycleEnd(self):
+    #     return self.cycleEnd
 
     def RequestManager(self):
         while True:
             ONU,buffer_size = yield self.request_store.get()
             if self.requestList[ONU.oid]['status'] == 0:
                 self.requestList[ONU.oid]['status'] = 1
+                self.requestList[ONU.oid]['ONU'] = ONU
                 self.requestList[ONU.oid]['buffer_size'] = buffer_size
                 self.request_counter+=1
             else:
@@ -650,8 +671,28 @@ class MTP_THREAD(object):
                 self.updateNextTHRequestList([excess_dist[0],
                         highLoadList[i][1]-excess_dist[1]])
             self.interTh_store.put({'threadNumber':self.threadNumber,'msg':'updateNextTHRequest','data':updateNextTHRequestList})
-            
+            if self.excess != 0:
+                print "WE HAVE A PROBLEM"
+        #Sending grants
+        next_time = self.env.now
+        for onu_grant in self.grantList:
+            ONU = self.requestList[onu_grant[0]]["ONU"]
+            delay = ONU.delay
+            bits = onu_grant[1] * 8
+            sending_time = 	bits/float(1000000000) #buffer transmission time
+            grant_time = delay + sending_time
+            grant_final_time = next_time + grant_time # timestamp for grant end
+            # construct grant message
+            grant = {'ONU':ONU,'grant_size': onu_grant[1], 'grant_final_time': grant_final_time, 'prediction': None}
+            self.grant_store.put(grant) # send grant to OLT
+            Grant_ONU_counter[ONU.oid] += 1
 
+            # next ONU grant start time
+            next_time = delay+grant_time + self.guard_interval
+            self.requestList[onu_grant[0]]['status'] = 0
+            self.requestList[onu_grant[0]]['buffer_size'] = 0
+        self.interTh_store.put({'threadNumber':self.threadNumber,'msg':'endThread','data':next_time})
+        yield self.reqGathering_ends
 
 
 class PD_DBA(DBA):
@@ -830,7 +871,7 @@ class PD_DBA(DBA):
 
 class OLT(object):
     """Optical line terminal"""
-    def __init__(self,env,odn,max_grant_size,dba,window,predict,model):
+    def __init__(self,env,odn,max_grant_size,dba,window,predict,model,numberONUs):
         self.env = env
         self.grant_store = simpy.Store(self.env) # grant communication between processes
         #choosing algorithms
@@ -884,7 +925,7 @@ for i in range(NUMBER_OF_ONUs):
     ONU_List.append(ONU(distance,i,env,odn,ONU_QUEUE_LIMIT,MAX_BUCKET_SIZE,packet_gen,pg_param))
 
 #creates OLT
-olt = OLT(env,odn,MAX_GRANT_SIZE,DBA_ALGORITHM,WINDOW,PREDICT,MODEL)
+olt = OLT(env,odn,MAX_GRANT_SIZE,DBA_ALGORITHM,WINDOW,PREDICT,MODEL,NUMBER_OF_ONUs)
 logging.info("starting simulator")
 env.run(until=SIM_DURATION)
 delay_file.close()
