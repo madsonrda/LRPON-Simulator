@@ -566,13 +566,30 @@ class MTP(DBA):
             self.ThreadList.append(MTP_THREAD(env,i,numberONUs,self.guard_interval,max_grant_size,grant_store,self.interTh_store))
         self.currentThread = 0
         self.nextThread = 1
+        self.ThreadManager_proc = self.env.process(self.ThreadManager())
 
     def dba(self,ONU,buffer_size):
         status = self.ThreadList[self.currentThread].getRequestStatus(ONU.oid)
         if status == 0:
-            yield self.ThreadList[self.currentThread].request_store.put((ONU,buffer_size))
+            self.ThreadList[self.currentThread].request_store.put((ONU,buffer_size))
         else:
-            yield self.ThreadList[self.nexThread].request_store.put((ONU,buffer_size))
+            self.ThreadList[self.nextThread].request_store.put((ONU,buffer_size))
+    def ThreadManager(self):
+        while True:
+            msg = yield self.interTh_store.get()
+            if msg['msg'] == 'getNextTHRequest':
+                requestList = self.ThreadList[self.nextThread].getRequestList()
+                self.ThreadList[self.currentThread].NextTHRequest_store.put(requestList)
+            elif msg['msg'] == 'updateNextTHRequest':
+                self.ThreadList[self.nextThread].updateRequest(msg['data'])
+            elif msg['msg'] == 'endThread':
+                self.ThreadList[self.nextThread].setCycleStart(msg['data'])
+                aux = self.currentThread
+                self.currentThread = self.nextThread
+                self.nextThread = aux
+            else:
+                print "ESTA ERRADO"
+
 
 
 class MTP_THREAD(object):
@@ -600,8 +617,14 @@ class MTP_THREAD(object):
         self.RequestManager_proc = self.env.process(self.RequestManager())
         self.dba_proc = self.env.process(self.dba())
 
+    def updateRequest(self,requestList):
+        for req in requestList:
+            self.requestList[req[0]]['status'] = 1
+            self.requestList[req[0]]['buffer_size'] += req[1]
     def getRequestStatus(self,ONU_id):
         return self.requestList[ONU_id]['status']
+    def getRequestList(self):
+        return self.requestList
     def setCycleStart(self,start):
         self.cycleStart = start
     def getCycleStart(self):
@@ -674,7 +697,10 @@ class MTP_THREAD(object):
             if self.excess != 0:
                 print "WE HAVE A PROBLEM"
         #Sending grants
-        next_time = self.env.now
+        if self.env.now >= self.cycleStart:
+            next_time = self.env.now
+        else:
+            next_time = self.cycleStart
         for onu_grant in self.grantList:
             ONU = self.requestList[onu_grant[0]]["ONU"]
             delay = ONU.delay
