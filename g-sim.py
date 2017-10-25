@@ -55,6 +55,7 @@ SIM_DURATION = args.time
 PKT_SIZE = 1500
 MAC_TABLE = {}
 Grant_ONU_counter = {}
+NUMBER_OF_OLTs = 1
 
 #create directories
 try:
@@ -273,7 +274,7 @@ class ONUPort(object):
         self.packets_drop = 0#dropped pkt counter
         self.qlimit = qlimit #Buffer queue limit
         self.byte_size = 0  # Current size of the buffer in bytes
-        self.last_buffer_size = 0 # size of the last buffer request
+        self.last_buffer_size = 0 # size of the last buffer request #MUDAR P/ ONU
         self.busy = 0  # Used to track if a packet is currently being sent
         self.action = env.process(self.run())  # starts the run() method as a SimPy process
         self.pkt = None #network packet obj
@@ -415,9 +416,10 @@ class ONUPort(object):
             self.buffer.put(pkt)
 
 class ONU(object):
-    def __init__(self,distance,oid,env,odn,qlimit,bucket,packet_gen,pg_param,lamb):
+    def __init__(self,distance,oid,env,lamb,odn,qlimit,bucket,packet_gen,pg_param):
         self.env = env
         self.grant_report_store = simpy.Store(self.env) #Simpy Stores grant usage report
+        self.request_container = simpy.Container(env, init=2, capacity=2)
         self.grant_report = []
         self.distance = distance #fiber distance
         self.oid = oid #ONU indentifier
@@ -503,10 +505,11 @@ class ONU(object):
         """A process which checks the queue size and send a REQUEST message to OLT"""
         while True:
             # send a REQUEST only if the queue size is greater than the bucket size
+            #yield self.request_container.get(1)
             if self.port.byte_size >= self.bucket:
                 requested_buffer = self.port.byte_size #gets the size of the buffer that will be requested
                 #update the size of the current/last buffer REQUEST
-                self.port.update_last_buffer_size(requested_buffer)
+                self.port.update_last_buffer_size(requested_buffer)#rever pq isso ta na porta
                 # creating request message
                 msg = {'text':"ONU %s sent this REQUEST for %.6f at %f" %
                     (self.oid,self.port.byte_size, self.env.now),'buffer_size':requested_buffer,'ONU':self}
@@ -514,7 +517,9 @@ class ONU(object):
 
                 # Wait for the grant processing to send the next request
                 self.grant_report = yield self.grant_report_store.get()
+                #yield self.env.timeout(2*self.delay)
             else: # periodic check delay
+                #yield self.request_container.put(1)
                 yield self.env.timeout(self.delay)
 
 class DBA(object):
@@ -897,8 +902,9 @@ class PD_DBA(DBA):
 
 class OLT(object):
     """Optical line terminal"""
-    def __init__(self,env,odn,max_grant_size,dba,window,predict,model,numberONUs):
+    def __init__(self,env,lamb,odn,max_grant_size,dba,window,predict,model,numberONUs):
         self.env = env
+        self.lamb = lamb
         self.grant_store = simpy.Store(self.env) # grant communication between processes
         #choosing algorithms
         if dba == "pd_dba":
@@ -918,7 +924,7 @@ class OLT(object):
     def OLT_receiver(self,odn):
         """A process which receives a request message from the ONUs."""
         while True:
-            request = yield odn.get_request() #get a request message
+            request = yield odn.get_request(self.lamb) #get a request message
             #print("Received Request from ONU {} at {}".format(request['ONU'].oid, self.env.now))
             # send request to DBA
             self.env.process(self.dba.dba(request['ONU'],request['buffer_size']))
@@ -942,16 +948,18 @@ else:
 
 #Creates the ONUs
 ONU_List = []
+#lambda esta improvisado aqui criar por argumento
+lamb = 0
 for i in range(NUMBER_OF_ONUs):
     MAC_TABLE[i] = "00:00:00:00:{}:{}".format(random.randint(0x00, 0xff),random.randint(0x00, 0xff))
     Grant_ONU_counter[i] = 0
 MAC_TABLE['olt'] = "ff:ff:ff:ff:00:01"
 for i in range(NUMBER_OF_ONUs):
     distance= DISTANCE
-    ONU_List.append(ONU(distance,i,env,odn,ONU_QUEUE_LIMIT,MAX_BUCKET_SIZE,packet_gen,pg_param))
+    ONU_List.append(ONU(distance,i,env,lamb,odn,ONU_QUEUE_LIMIT,MAX_BUCKET_SIZE,packet_gen,pg_param))
 
 #creates OLT
-olt = OLT(env,odn,MAX_GRANT_SIZE,DBA_ALGORITHM,WINDOW,PREDICT,MODEL,NUMBER_OF_ONUs)
+olt = OLT(env,lamb,odn,MAX_GRANT_SIZE,DBA_ALGORITHM,WINDOW,PREDICT,MODEL,NUMBER_OF_ONUs)
 logging.info("starting simulator")
 env.run(until=SIM_DURATION)
 delay_file.close()
