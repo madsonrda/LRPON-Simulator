@@ -52,7 +52,7 @@ SIM_DURATION = args.time
 
 
 #settings
-PKT_SIZE = 1500
+PKT_SIZE = 768000
 MAC_TABLE = {}
 Grant_ONU_counter = {}
 NUMBER_OF_OLTs = 1
@@ -239,7 +239,7 @@ class SubStream(object):
                 p = Packet(self.env.now, self.size, self.packets_sent, src=self.id)
                 pkt_file.write("{},{},{}\n".format(self.env.now,on_period,size))
                 bits = p.size * 8
-                sending_time = 	bits/float(10000000)
+                sending_time = 	bits/float(100000000)#100megabit
                 yield self.env.timeout(sending_time)
                 self.aggregator.put(p)
             off_period = self.off()/1000
@@ -274,7 +274,6 @@ class ONUPort(object):
         self.packets_drop = 0#dropped pkt counter
         self.qlimit = qlimit #Buffer queue limit
         self.byte_size = 0  # Current size of the buffer in bytes
-        self.last_buffer_size = 0 # size of the last buffer request #MUDAR P/ ONU
         self.busy = 0  # Used to track if a packet is currently being sent
         self.action = env.process(self.run())  # starts the run() method as a SimPy process
         self.pkt = None #network packet obj
@@ -290,12 +289,6 @@ class ONUPort(object):
         self.grant_size = grant['grant_size']
         self.grant_final_time = grant['grant_final_time']
         self.predicted_grant = pred
-
-    def update_last_buffer_size(self,requested_buffer): #update the size of the last buffer request
-        self.last_buffer_size = requested_buffer
-
-    def get_last_buffer_size(self): #return the size of the last buffer request
-        return self.last_buffer_size
 
     def get_pkt(self):
         """process to get the packet from the buffer   """
@@ -356,7 +349,7 @@ class ONUPort(object):
                 break
 
             bits = pkt.size * 8
-            sending_time = 	bits/float(1000000000) # buffer transmission time
+            sending_time = 	bits/float(10000000000) # buffer transmission time
 
             #To avoid fragmentation by passing the Grant window
             if env.now + sending_time > self.grant_final_time + self.guard_interval:
@@ -425,6 +418,9 @@ class ONU(object):
         self.oid = oid #ONU indentifier
         self.delay = self.distance/ float(210000) # fiber propagation delay
         self.excess = 0 #difference between the size of the request and the grant
+        self.newArrived = 0
+        self.last_req_buffer = 0
+        self.request_counter = 0
         self.pg = packet_gen(self.env, "bbmp", **pg_param) #creates the packet generator
         if qlimit == 0:# checks if the queue has a size limit
             queue_limit = None
@@ -445,7 +441,7 @@ class ONU(object):
             pred_grant_usage_report = [] # grant prediction report list
             # real start and endtime used report to OLT
 
-            self.excess = self.port.get_last_buffer_size() - grant['grant_size'] #update the excess
+            self.excess = self.last_req_buffer - grant['grant_size'] #update the excess
             self.port.set_grant(grant,False) #grant info to onu port
 
             sent_pkt = self.env.process(self.port.send(self.oid)) # send pkts during grant time
@@ -500,27 +496,48 @@ class ONU(object):
 
             #Signals the end of grant processing to allow new requests
             yield self.grant_report_store.put(pred_grant_usage_report)
-
-    def ONU_sender(self, odn):
+################################################################
+    #IPACT
+    # def ONU_sender(self, odn):
+    #     """A process which checks the queue size and send a REQUEST message to OLT"""
+    #     while True:
+    #         # send a REQUEST only if the queue size is greater than the bucket size
+    #         #yield self.request_container.get(1)
+    #         if self.port.byte_size >= self.bucket:
+    #             requested_buffer = self.port.byte_size #gets the size of the buffer that will be requested
+    #             #update the size of the current/last buffer REQUEST
+    #             self.last_req_buffer = requested_buffer
+    #             # creating request message
+    #             msg = {'text':"ONU %s sent this REQUEST for %.6f at %f" %
+    #                 (self.oid,self.port.byte_size, self.env.now),'buffer_size':requested_buffer,'ONU':self}
+    #             odn.put_request((msg),self)# put the request message in the odn
+    #
+    #             # Wait for the grant processing to send the next request
+    #             self.grant_report = yield self.grant_report_store.get()
+    #             #yield self.env.timeout(2*self.delay)
+    #         else: # periodic check delay
+    #             #yield self.request_container.put(1)
+    #             yield self.env.timeout(self.delay)
+    #MTP
+    def ONU_senderMT(self, odn):
         """A process which checks the queue size and send a REQUEST message to OLT"""
         while True:
             # send a REQUEST only if the queue size is greater than the bucket size
-            #yield self.request_container.get(1)
-            if self.port.byte_size >= self.bucket:
-                requested_buffer = self.port.byte_size #gets the size of the buffer that will be requested
-                #update the size of the current/last buffer REQUEST
-                self.port.update_last_buffer_size(requested_buffer)#rever pq isso ta na porta
-                # creating request message
-                msg = {'text':"ONU %s sent this REQUEST for %.6f at %f" %
-                    (self.oid,self.port.byte_size, self.env.now),'buffer_size':requested_buffer,'ONU':self}
-                odn.put_request((msg),self)# put the request message in the odn
+            yield self.request_container.get(1)
 
-                # Wait for the grant processing to send the next request
-                self.grant_report = yield self.grant_report_store.get()
-                #yield self.env.timeout(2*self.delay)
-            else: # periodic check delay
-                #yield self.request_container.put(1)
-                yield self.env.timeout(self.delay)
+            requested_buffer = self.port.byte_size #gets the size of the buffer that will be requested
+            #update the size of the current/last buffer REQUEST
+            self.newArrived = requested_buffer - self.last_req_buffer
+            self.last_req_buffer = requested_buffer
+            # creating request message
+            msg = {'text':"ONU %s sent this REQUEST for %.6f at %f" %
+                (self.oid,self.port.byte_size, self.env.now),'buffer_size':requested_buffer,'ONU':self}
+            odn.put_request((msg),self)# put the request message in the odn
+
+            # Wait for the grant processing to send the next request
+            #self.grant_report = yield self.grant_report_store.get()
+            #yield self.env.timeout(2*self.delay)
+
 
 class DBA(object):
     """DBA Parent class, heritated by every kind of DBA"""
@@ -547,7 +564,7 @@ class IPACT(DBA):
             if self.max_grant_size > 0 and buffer_size > self.max_grant_size:
                 buffer_size = self.max_grant_size
             bits = buffer_size * 8
-            sending_time = 	bits/float(1000000000) #buffer transmission time
+            sending_time = 	bits/float(10000000000) #buffer transmission time
             grant_time = delay + sending_time
             grant_final_time = self.env.now + grant_time # timestamp for grant end
             counter = Grant_ONU_counter[ONU.oid] # Grant message counter per ONU
@@ -608,7 +625,7 @@ class MTP_THREAD(object):
         self.requestList = []
         self.grantList = []
         for i in range(self.numberONUs):s
-            self.requestList.append({'status':0,'ONU':None,'buffer_size':None})
+            self.requestList.append({'bandw':0,'ONU':None,'buffer_size':0})
         self.excess = 0
         self.lowLoadList = [] #ONU_id,
         self.highLoadList = [] #tuple ONU_id, excess
@@ -642,8 +659,8 @@ class MTP_THREAD(object):
     def RequestManager(self):
         while True:
             ONU,buffer_size = yield self.request_store.get()
-            if self.requestList[ONU.oid]['status'] == 0:
-                self.requestList[ONU.oid]['status'] = 1
+            if self.requestList[ONU.oid]['buffer_size'] == 0:
+                #self.requestList[ONU.oid]['status'] = 1
                 self.requestList[ONU.oid]['ONU'] = ONU
                 self.requestList[ONU.oid]['buffer_size'] = buffer_size
                 self.request_counter+=1
@@ -653,6 +670,40 @@ class MTP_THREAD(object):
                 self.reqGathering_ends.succeed()
                 self.reqGathering_ends = self.env.event()
     def dba(self):
+        yield self.reqGathering_ends
+        #calculate real bandwith demand
+        for oid,req in enumerate(self.requestList):
+            Newtraffic = self.lastTHRequestList[oid]['buffer_size'] - req['buffer_size']
+            self.requestList[oid]['bandw'] = Newtraffic + self.lastTHRequestList[oid]['backlogged']
+
+        #check valid requests in next thread
+        self.interTh_store.put({'threadNumber':self.threadNumber,'msg':'getNextTHRequest','data':None})
+        NextTHRequest = yield self.NextTHRequest_store.get()
+        updateNextTHRequestList = []
+        for oid,req in enumerate(self.requestList):
+            if NextTHRequest[oid]['buffer_size'] != 0:
+                nextNewtraffic = NextTHRequest[oid]['buffer_size'] - req['buffer_size']
+                self.requestList[oid]['bandw'] += nextNewtraffic
+                nreq = self.requestList[oid]['buffer_size']
+                updateNextTHRequestList.append([oid,nreq])
+
+        # updateNextTHRequestList = []
+        # for lowLoad in self.lowLoadList:
+        #     if NextTHRequest[lowLoad[0]]['status'] == 1:
+        #         bandw = NextTHRequest[lowLoad[0]]['buffer_size'] - lowLoad[1]
+        #         if NextTHRequest[lowLoad[0]]['buffer_size'] <=0:
+        #             print "ALGO MUITO ERRADO"
+        #         if bandw >= 0:
+        #             self.grantList.append([lowLoad[0],self.Bmin])
+        #             self.excess -= lowLoad[1]
+        #             updateNextTHRequestList.append([lowLoad[0],-1*(lowLoad[1])])
+        #         else:
+        #             self.grantList.append( [lowLoad[0],
+        #                 self.requestList[lowLoad[0]]['buffer_size'] + NextTHRequest[lowLoad[0]]['buffer_size'] )
+        #             self.excess -= NextTHRequest[lowLoad[0]]['buffer_size']
+        #             updateNextTHRequestList.append([lowLoad[0],
+        #                 -1*(NextTHRequest[lowLoad[0]]['buffer_size'])])
+        # self.interTh_store.put({'threadNumber':self.threadNumber,'msg':'updateNextTHRequest','data':updateNextTHRequestList})
         #Split high load ONUs
         for oid,req in enumerate(self.requestList):
             bandw = self.Bmin - req['buffer_size']
@@ -661,26 +712,6 @@ class MTP_THREAD(object):
             else:
                 self.excess += bandw
                 self.lowLoadList.append([oid,bandw])
-        #check valid requests in next thread
-        self.interTh_store.put({'threadNumber':self.threadNumber,'msg':'getNextTHRequest','data':None})
-        NextTHRequest = yield self.NextTHRequest_store.get()
-        updateNextTHRequestList = []
-        for lowLoad in self.lowLoadList:
-            if NextTHRequest[lowLoad[0]]['status'] == 1:
-                bandw = NextTHRequest[lowLoad[0]]['buffer_size'] - lowLoad[1]
-                if NextTHRequest[lowLoad[0]]['buffer_size'] <=0:
-                    print "ALGO MUITO ERRADO"
-                if bandw >= 0:
-                    self.grantList.append([lowLoad[0],self.Bmin])
-                    self.excess -= lowLoad[1]
-                    updateNextTHRequestList.append([lowLoad[0],-1*(lowLoad[1])])
-                else:
-                    self.grantList.append( [lowLoad[0],
-                        self.requestList[lowLoad[0]]['buffer_size'] + NextTHRequest[lowLoad[0]]['buffer_size'] )
-                    self.excess -= NextTHRequest[lowLoad[0]]['buffer_size']
-                    updateNextTHRequestList.append([lowLoad[0],
-                        -1*(NextTHRequest[lowLoad[0]]['buffer_size'])])
-        self.interTh_store.put({'threadNumber':self.threadNumber,'msg':'updateNextTHRequest','data':updateNextTHRequestList})
         #distributing excess
         if self.excess < 0:
             print "DEU MERDA"
@@ -710,7 +741,7 @@ class MTP_THREAD(object):
             ONU = self.requestList[onu_grant[0]]["ONU"]
             delay = ONU.delay
             bits = onu_grant[1] * 8
-            sending_time = 	bits/float(1000000000) #buffer transmission time
+            sending_time = 	bits/float(10000000000) #buffer transmission time
             grant_time = delay + sending_time
             grant_final_time = next_time + grant_time # timestamp for grant end
             # construct grant message
@@ -723,7 +754,7 @@ class MTP_THREAD(object):
             self.requestList[onu_grant[0]]['status'] = 0
             self.requestList[onu_grant[0]]['buffer_size'] = 0
         self.interTh_store.put({'threadNumber':self.threadNumber,'msg':'endThread','data':next_time})
-        yield self.reqGathering_ends
+
 
 
 class PD_DBA(DBA):
@@ -871,7 +902,7 @@ class PD_DBA(DBA):
             if self.max_grant_size > 0 and buffer_size > self.max_grant_size:
                 buffer_size = self.max_grant_size
             bits = buffer_size * 8
-            sending_time = 	bits/float(1000000000) #buffer transmission time
+            sending_time = 	bits/float(10000000000) #buffer transmission time10g
             grant_time = delay + sending_time # one way delay + transmission time
             grant_final_time = self.env.now + grant_time # timestamp for grant end
 
