@@ -25,8 +25,8 @@ parser.add_argument("-m", "--maxgrant", type=float, default=0, help="The maximum
 parser.add_argument("-d","--distance", type=int, default=100, nargs='?', help="Distance in km from ONU to OLT")
 parser.add_argument("-e","--exponent", type=float, default=2320, nargs='?', help="Packet arrivals distribution exponent")
 parser.add_argument("-s","--seed", type=int, default=20, help="Random seed")
-parser.add_argument("-w","--window", type=int, default=20, help="PD-DBA window")
-parser.add_argument("-p","--predict", type=int, default=20, help="PD-DBA predictions")
+parser.add_argument("-w","--window", type=int, default=10, help="PD-DBA window")
+parser.add_argument("-p","--predict", type=int, default=5, help="PD-DBA predictions")
 parser.add_argument("-M","--model", type=str, default='ols', choices=["ols","ridge"] ,help="PD-DBA prediction model")
 parser.add_argument("-T","--traffic", type=str, default='poisson', choices=["poisson","cbr"] ,help="Traffic distribution")
 parser.add_argument("-o", "--output", type=str, default=None, help="Output file name")
@@ -52,7 +52,7 @@ SIM_DURATION = args.time
 
 
 #settings
-PKT_SIZE = 768000
+PKT_SIZE = 3072000
 MAC_TABLE = {}
 Grant_ONU_counter = {}
 NUMBER_OF_OLTs = 1
@@ -181,7 +181,7 @@ class PacketGenerator(object):
 
 class CBR_PG(PacketGenerator):
     """This class represents the Constant Bit Rate packet generation process """
-    def __init__(self,env, id, fix_pkt_size,interval=0.001):
+    def __init__(self,env, id, fix_pkt_size,interval=0.01):
         self.interval = interval
         PacketGenerator.__init__(self,env, id, fix_pkt_size)
     def run(self):
@@ -221,43 +221,43 @@ class poisson_PG(PacketGenerator):
                 pkt_file.write("{},{},{}\n".format(self.env.now,arrival,size))
             self.out.put(p) # put the packet in ONU port
 
-class SubStream(object):
-    """This class represents the sub-streams which will be aggregated by the SelfSimilar class"""
-    def __init__(self,env, on_dist, off_dist,aggregator,size):
-        self.on = on_dist #packet arrivals ON distribution
-        self.off = off_dist #packet arrivals ON distribution
-        self.aggregator = aggregator
-        self.size = size
-        self.packets_sent = 0 # packet counter
-        self.action = env.process(self.run())  # starts the run() method as a SimPy process
-
-    def run(self):
-        while True:
-            on_period = self.env.now + (self.on()/1000)
-            while self.env.now <= on_period:
-                self.packets_sent += 1
-                p = Packet(self.env.now, self.size, self.packets_sent, src=self.id)
-                pkt_file.write("{},{},{}\n".format(self.env.now,on_period,size))
-                bits = p.size * 8
-                sending_time = 	bits/float(100000000)#100megabit
-                yield self.env.timeout(sending_time)
-                self.aggregator.put(p)
-            off_period = self.off()/1000
-            self.env.timeout(off_period)
-
-
-
-class SelfSimilar(PacketGenerator):
-    """This class represents the self-similar packet generation process """
-    def __init__(self,env, id, on_dist, off_dist, fix_pkt_size):
-        PacketGenerator.__init__(self,env, id)
-        self.SubStreamAggregator = simpy.Store(env)# sub-streams traffic aggregator
+# class SubStream(object):
+#     """This class represents the sub-streams which will be aggregated by the SelfSimilar class"""
+#     def __init__(self,env, on_dist, off_dist,aggregator,size):
+#         self.on = on_dist #packet arrivals ON distribution
+#         self.off = off_dist #packet arrivals ON distribution
+#         self.aggregator = aggregator
+#         self.size = size
+#         self.packets_sent = 0 # packet counter
+#         self.action = env.process(self.run())  # starts the run() method as a SimPy process
+#
+#     def run(self):
+#         while True:
+#             on_period = self.env.now + (self.on()/1000)
+#             while self.env.now <= on_period:
+#                 self.packets_sent += 1
+#                 p = Packet(self.env.now, self.size, self.packets_sent, src=self.id)
+#                 pkt_file.write("{},{},{}\n".format(self.env.now,on_period,size))
+#                 bits = p.size * 8
+#                 sending_time = 	bits/float(100000000)#100megabit
+#                 yield self.env.timeout(sending_time)
+#                 self.aggregator.put(p)
+#             off_period = self.off()/1000
+#             self.env.timeout(off_period)
 
 
-    def run(self):
-        """The generator function used in simulations.
-        """
-        while self.env.now < self.finish:
+
+# class SelfSimilar(PacketGenerator):
+#     """This class represents the self-similar packet generation process """
+#     def __init__(self,env, id, on_dist, off_dist, fix_pkt_size):
+#         PacketGenerator.__init__(self,env, id)
+#         self.SubStreamAggregator = simpy.Store(env)# sub-streams traffic aggregator
+#
+#
+#     def run(self):
+#         """The generator function used in simulations.
+#         """
+#         while self.env.now < self.finish:
 
 class ONUPort(object):
 
@@ -498,45 +498,45 @@ class ONU(object):
             yield self.grant_report_store.put(pred_grant_usage_report)
 ################################################################
     #IPACT
-    # def ONU_sender(self, odn):
-    #     """A process which checks the queue size and send a REQUEST message to OLT"""
-    #     while True:
-    #         # send a REQUEST only if the queue size is greater than the bucket size
-    #         #yield self.request_container.get(1)
-    #         if self.port.byte_size >= self.bucket:
-    #             requested_buffer = self.port.byte_size #gets the size of the buffer that will be requested
-    #             #update the size of the current/last buffer REQUEST
-    #             self.last_req_buffer = requested_buffer
-    #             # creating request message
-    #             msg = {'text':"ONU %s sent this REQUEST for %.6f at %f" %
-    #                 (self.oid,self.port.byte_size, self.env.now),'buffer_size':requested_buffer,'ONU':self}
-    #             odn.put_request((msg),self)# put the request message in the odn
-    #
-    #             # Wait for the grant processing to send the next request
-    #             self.grant_report = yield self.grant_report_store.get()
-    #             #yield self.env.timeout(2*self.delay)
-    #         else: # periodic check delay
-    #             #yield self.request_container.put(1)
-    #             yield self.env.timeout(self.delay)
-    #MTP
-    def ONU_senderMT(self, odn):
+    def ONU_sender(self, odn):
         """A process which checks the queue size and send a REQUEST message to OLT"""
         while True:
             # send a REQUEST only if the queue size is greater than the bucket size
-            yield self.request_container.get(1)
+            #yield self.request_container.get(1)
+            if self.port.byte_size >= self.bucket:
+                requested_buffer = self.port.byte_size #gets the size of the buffer that will be requested
+                #update the size of the current/last buffer REQUEST
+                self.last_req_buffer = requested_buffer
+                # creating request message
+                msg = {'text':"ONU %s sent this REQUEST for %.6f at %f" %
+                    (self.oid,self.port.byte_size, self.env.now),'buffer_size':requested_buffer,'ONU':self}
+                odn.put_request((msg),self)# put the request message in the odn
 
-            requested_buffer = self.port.byte_size #gets the size of the buffer that will be requested
-            #update the size of the current/last buffer REQUEST
-            self.newArrived = requested_buffer - self.last_req_buffer
-            self.last_req_buffer = requested_buffer
-            # creating request message
-            msg = {'text':"ONU %s sent this REQUEST for %.6f at %f" %
-                (self.oid,self.port.byte_size, self.env.now),'buffer_size':requested_buffer,'ONU':self}
-            odn.put_request((msg),self)# put the request message in the odn
-
-            # Wait for the grant processing to send the next request
-            #self.grant_report = yield self.grant_report_store.get()
-            #yield self.env.timeout(2*self.delay)
+                # Wait for the grant processing to send the next request
+                self.grant_report = yield self.grant_report_store.get()
+                #yield self.env.timeout(2*self.delay)
+            else: # periodic check delay
+                #yield self.request_container.put(1)
+                yield self.env.timeout(self.delay)
+    #MTP
+    # def ONU_senderMT(self, odn):
+    #     """A process which checks the queue size and send a REQUEST message to OLT"""
+    #     while True:
+    #         # send a REQUEST only if the queue size is greater than the bucket size
+    #         yield self.request_container.get(1)
+    #
+    #         requested_buffer = self.port.byte_size #gets the size of the buffer that will be requested
+    #         #update the size of the current/last buffer REQUEST
+    #         self.newArrived = requested_buffer - self.last_req_buffer
+    #         self.last_req_buffer = requested_buffer
+    #         # creating request message
+    #         msg = {'text':"ONU %s sent this REQUEST for %.6f at %f" %
+    #             (self.oid,self.port.byte_size, self.env.now),'buffer_size':requested_buffer,'ONU':self}
+    #         odn.put_request((msg),self)# put the request message in the odn
+    #
+    #         # Wait for the grant processing to send the next request
+    #         #self.grant_report = yield self.grant_report_store.get()
+    #         #yield self.env.timeout(2*self.delay)
 
 
 class DBA(object):
@@ -624,7 +624,7 @@ class MTP_THREAD(object):
         self.request_counter = 0
         self.requestList = []
         self.grantList = []
-        for i in range(self.numberONUs):s
+        for i in range(self.numberONUs):
             self.requestList.append({'bandw':0,'ONU':None,'buffer_size':0})
         self.excess = 0
         self.lowLoadList = [] #ONU_id,
