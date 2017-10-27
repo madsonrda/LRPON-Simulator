@@ -23,6 +23,7 @@ parser.add_argument("-b", "--bucket", type=int, default=27000, help="The size of
 parser.add_argument("-Q", "--qlimit", type=int, default=None ,help="The size of the ONU port queue in bytes")
 parser.add_argument("-m", "--maxgrant", type=float, default=0, help="The maximum size of buffer which a grant can allow")
 parser.add_argument("-d","--distance", type=int, default=100, nargs='?', help="Distance in km from ONU to OLT")
+parser.add_argument("-P","--packetsize", type=int, default=768000, nargs='?', help="Fixed packet size")
 parser.add_argument("-e","--exponent", type=float, default=2320, nargs='?', help="Packet arrivals distribution exponent")
 parser.add_argument("-s","--seed", type=int, default=20, help="Random seed")
 parser.add_argument("-w","--window", type=int, default=10, help="PD-DBA window")
@@ -48,11 +49,12 @@ PREDICT = args.predict
 MODEL = args.model
 TRAFFIC = args.traffic
 SIM_DURATION = args.time
+PKT_SIZE = args.packetsize
 
 
 
 #settings
-PKT_SIZE = 3072000
+
 MAC_TABLE = {}
 Grant_ONU_counter = {}
 NUMBER_OF_OLTs = 1
