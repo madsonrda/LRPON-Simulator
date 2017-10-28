@@ -17,7 +17,7 @@ import os, errno
 parser = argparse.ArgumentParser(description="Long Reach PON Simulator")
 group = parser.add_mutually_exclusive_group()
 group.add_argument("-q", "--quiet", action="store_true")
-parser.add_argument("A", type=str, default='ipact',choices=["ipact","pd_dba","mdba"], help="DBA algorithm")
+parser.add_argument("A", type=str, default='ipact',choices=["ipact","pd_dba","mdba","mpd_dba"], help="DBA algorithm")
 parser.add_argument("-O", "--onu", type=int, default=3, help="The number of ONUs")
 parser.add_argument("-b", "--bucket", type=int, default=27000, help="The size of the ONU sender bucket in bytes")
 parser.add_argument("-Q", "--qlimit", type=int, default=None ,help="The size of the ONU port queue in bytes")
@@ -92,6 +92,13 @@ if FILENAME:
     pkt_file = open("{}-pkt.csv".format(FILENAME),"w")
     overlap_file = open("{}-overlap.csv".format(FILENAME),"w")
 elif DBA_ALGORITHM == "pd_dba":
+    delay_file = open("csv/delay/{}-{}-{}-{}-{}-{}-{}-{}-{}-delay.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT,WINDOW,PREDICT),"w")
+    delay_normal_file = open("csv/delay/{}-{}-{}-{}-{}-{}-{}-{}-{}-delay_normal.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT,WINDOW,PREDICT),"w")
+    delay_prediction_file = open("csv/delay/{}-{}-{}-{}-{}-{}-{}-{}-{}-delay_pred.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT,WINDOW,PREDICT),"w")
+    grant_time_file = open("csv/grant_time/{}-{}-{}-{}-{}-{}-{}-{}-{}-grant_time.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT,WINDOW,PREDICT),"w")
+    pkt_file = open("csv/pkt/{}-{}-{}-{}-{}-{}-{}-{}-{}-pkt.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT,WINDOW,PREDICT),"w")
+    overlap_file = open("csv/overlap/{}-{}-{}-{}-{}-{}-{}-{}-{}-overlap.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT,WINDOW,PREDICT),"w")
+elif DBA_ALGORITHM == "mpd_dba":
     delay_file = open("csv/delay/{}-{}-{}-{}-{}-{}-{}-{}-{}-delay.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT,WINDOW,PREDICT),"w")
     delay_normal_file = open("csv/delay/{}-{}-{}-{}-{}-{}-{}-{}-{}-delay_normal.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT,WINDOW,PREDICT),"w")
     delay_prediction_file = open("csv/delay/{}-{}-{}-{}-{}-{}-{}-{}-{}-delay_pred.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT,WINDOW,PREDICT),"w")
@@ -480,7 +487,7 @@ class ONU(object):
                     except Exception as e:
                         logging.debug("{}: pred {}, gf {}".format(self.env.now,pred,grant['grant_final_time']))
                         logging.debug("Error while waiting for the next grant ({})".format(e))
-                        breakpacket_gen = Exponential_PG
+                        break
 
                     self.port.set_grant(pred_grant,True) #grant info to onu port
                     sent_pkt = self.env.process(self.port.send(self.oid))#sending predicted messages
@@ -982,6 +989,128 @@ class PD_DBA(DBA):
             # timeout until the end of grant to then get next grant request
             yield self.env.timeout(grant_time+delay+ self.guard_interval)
 
+
+class MPD_DBA(DBA):
+    def __init__(self,env,max_grant_size,grant_store,window=20,predict=5,model="ols"):
+        DBA.__init__(self,env,max_grant_size,grant_store)
+        self.counter = simpy.Resource(self.env, capacity=1)#create a queue of requests to DBA
+        self.window = window    # past observations window size
+        self.predict = predict # number of predictions
+        self.next_grant = 0
+        self.grant_history = range(NUMBER_OF_ONUs) #grant history per ONU (training set)
+        self.predictions_array = []
+        self.predictions_counter_array = []
+        for i in range(NUMBER_OF_ONUs):
+            # training unit
+            self.grant_history[i] = {'counter': [], 'start': [], 'end': []}
+            self.predictions_counter_array.append(0)
+        #Implementing the model
+        if model == "ols":
+            reg = linear_model.LinearRegression()
+        else:
+            reg = linear_model.Ridge(alpha=.5)
+
+        self.model = MultiOutputRegressor(reg)
+
+    def drop_overlap(self,predictions,ONU):
+        predcp = list(predictions)
+        j = 1
+        #drop: if there are overlaps between the predictions
+        for p in predcp[:-1]:
+            for q in predcp[j:]:
+                if p[1] + ONU.delay  > q[0]:
+                    predictions = None
+                    break
+
+            j+=1
+        #drop: if there is overlap between standard grant and first prediction
+        if predictions is not None and (self.grant_history[ONU.oid]['end'][-1] +ONU.delay+ self.guard_interval) > predictions[0][0]:
+            predictions = None
+
+
+        return predictions
+
+    def predictor(self, ONU_id):
+        # check if there's enough observations to fill window
+
+        if len( self.grant_history[ONU_id]['start'] ) >= self.window :
+            #reduce the grant history to the window size
+            self.grant_history[ONU_id]['start'] = self.grant_history[ONU_id]['start'][-self.window:]
+            self.grant_history[ONU_id]['end'] = self.grant_history[ONU_id]['end'][-self.window:]
+            self.grant_history[ONU_id]['counter'] = self.grant_history[ONU_id]['counter'][-self.window:]
+            df_tmp = pd.DataFrame(self.grant_history[ONU_id]) # temp dataframe w/ past grants
+            # create a list of the next p Grants that will be predicted
+            X_pred = np.arange(self.grant_history[ONU_id]['counter'][-1] +1, self.grant_history[ONU_id]['counter'][-1] + 1 + self.predict).reshape(-1,1)
+
+            # model fitting
+            self.model.fit( np.array( df_tmp['counter'] ).reshape(-1,1) , df_tmp[['start','end']] )
+            pred = self.model.predict(X_pred) # predicting start and end
+
+            predictions = list(pred)
+            #predictions = self.predictions_schedule(predictions)
+
+            return predictions
+
+        else:
+            return  None
+
+
+    def dba(self,ONU,buffer_size):
+        with self.counter.request() as my_turn:
+            """ DBA only process one request at a time """
+            yield my_turn
+            time_stamp = self.env.now
+            delay = ONU.delay
+
+            if len(ONU.grant_report) > 0:
+                # if predictions where utilized, update history with real grant usage
+                for report in ONU.grant_report:
+                    self.grant_history[ONU.oid]['start'].append(report[0])
+                    self.grant_history[ONU.oid]['end'].append(report[1])
+                    self.grant_history[ONU.oid]['counter'].append( self.grant_history[ONU.oid]['counter'][-1] + 1  )
+
+            # check if max grant size is enabled
+            if self.max_grant_size > 0 and buffer_size > self.max_grant_size:
+                buffer_size = self.max_grant_size
+            bits = buffer_size * 8
+            sending_time = 	bits/float(10000000000) #buffer transmission time10g
+            grant_time = delay + sending_time # one way delay + transmission time
+            ini = max(self.env.now,self.next_grant)
+            grant_final_time = ini + grant_time # timestamp for grant end
+
+            # Update grant history with grant requested
+            self.grant_history[ONU.oid]['start'].append(self.env.now)
+            self.grant_history[ONU.oid]['end'].append(grant_final_time)
+            if len(self.grant_history[ONU.oid]['counter']) > 0:
+                self.grant_history[ONU.oid]['counter'].append( self.grant_history[ONU.oid]['counter'][-1] + 1  )
+            else:
+                self.grant_history[ONU.oid]['counter'].append( 1 )
+
+            if self.predictions_counter_array[ONU.oid] > 0:
+                self.predictions_counter_array[ONU.oid] -= 1
+            else:
+                #PREDICTIONS
+                predictions = self.predictor(ONU.oid) # start predictor process
+
+                #drop if the predictions have overlap
+                if predictions is not None:
+                    predictions = self.drop_overlap(predictions,ONU)
+
+                if predictions is not None:
+                    self.predictions_counter_array[ONU.oid] = len(predictions)
+
+
+                #grant_time_file.write( "{},{},{}\n".format(ONU.oid,self.env.now,grant_final_time) )
+                # construct grant message
+                grant = {'ONU':ONU,'grant_size': buffer_size, 'grant_final_time': grant_final_time, 'prediction': predictions}
+
+                self.grant_store.put(grant) # send grant to OLT
+
+                # timeout until the end of grant to then get next grant request
+                self.next_grant = grant_final_time + delay + self.guard_interval
+
+
+
 class OLT(object):
     """Optical line terminal"""
     def __init__(self,env,lamb,odn,max_grant_size,dba,window,predict,model,numberONUs):
@@ -991,6 +1120,8 @@ class OLT(object):
         #choosing algorithms
         if dba == "pd_dba":
             self.dba = PD_DBA(self.env, max_grant_size, self.grant_store,window,predict,model)
+        elif dba == "mpd_dba":
+            self.dba = MPD_DBA(self.env, max_grant_size, self.grant_store,window,predict,model)
         elif dba == "mdba":
             self.dba = MDBA(self.env, max_grant_size, self.grant_store)
         else:
