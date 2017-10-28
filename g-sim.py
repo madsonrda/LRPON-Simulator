@@ -17,7 +17,7 @@ import os, errno
 parser = argparse.ArgumentParser(description="Long Reach PON Simulator")
 group = parser.add_mutually_exclusive_group()
 group.add_argument("-q", "--quiet", action="store_true")
-parser.add_argument("A", type=str, default='ipact',choices=["ipact","pd_dba"], help="DBA algorithm")
+parser.add_argument("A", type=str, default='ipact',choices=["ipact","pd_dba","mdba"], help="DBA algorithm")
 parser.add_argument("-O", "--onu", type=int, default=3, help="The number of ONUs")
 parser.add_argument("-b", "--bucket", type=int, default=27000, help="The size of the ONU sender bucket in bytes")
 parser.add_argument("-Q", "--qlimit", type=int, default=None ,help="The size of the ONU port queue in bytes")
@@ -98,6 +98,13 @@ elif DBA_ALGORITHM == "pd_dba":
     grant_time_file = open("csv/grant_time/{}-{}-{}-{}-{}-{}-{}-{}-{}-grant_time.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT,WINDOW,PREDICT),"w")
     pkt_file = open("csv/pkt/{}-{}-{}-{}-{}-{}-{}-{}-{}-pkt.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT,WINDOW,PREDICT),"w")
     overlap_file = open("csv/overlap/{}-{}-{}-{}-{}-{}-{}-{}-{}-overlap.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT,WINDOW,PREDICT),"w")
+elif DBA_ALGORITHM == "mdba":
+    delay_file = open("csv/delay/{}-{}-{}-{}-{}-{}-{}-delay.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT),"w")
+    delay_normal_file = open("csv/delay/{}-{}-{}-{}-{}-{}-{}-delay_normal.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT),"w")
+    delay_prediction_file = open("csv/delay/{}-{}-{}-{}-{}-{}-{}-delay_pred.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT),"w")
+    grant_time_file = open("csv/grant_time/{}-{}-{}-{}-{}-{}-{}-grant_time.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT),"w")
+    pkt_file = open("csv/pkt/{}-{}-{}-{}-{}-{}-{}-pkt.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT),"w")
+    overlap_file = open("csv/overlap/{}-{}-{}-{}-{}-{}-{}-overlap.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT),"w")
 else:
     delay_file = open("csv/delay/{}-{}-{}-{}-{}-{}-{}-delay.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT),"w")
     delay_normal_file = open("csv/delay/{}-{}-{}-{}-{}-{}-{}-delay_normal.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT),"w")
@@ -131,6 +138,9 @@ class ODN(object):
     def up_latency(self, value,ONU):
         """Calculates upstream propagation delay."""
         yield self.env.timeout(ONU.delay)
+        self.upstream[ONU.lamb].put(value)
+
+    def directly_upstream(self,ONU,value):
         self.upstream[ONU.lamb].put(value)
 
     def down_latency(self,ONU,value):
@@ -171,8 +181,9 @@ class Packet(object):
 
 class PacketGenerator(object):
     """This class represents the packet generation process """
-    def __init__(self, env, id, fix_pkt_size=1500, finish=float("inf")):
+    def __init__(self, env, id, ONU, fix_pkt_size=1500, finish=float("inf")):
         self.id = id # packet id
+        self.ONU = ONU
         self.env = env # Simpy Environment
         self.fix_pkt_size = fix_pkt_size # Fixed packet size
         self.finish = finish # packe end time
@@ -183,9 +194,9 @@ class PacketGenerator(object):
 
 class CBR_PG(PacketGenerator):
     """This class represents the Constant Bit Rate packet generation process """
-    def __init__(self,env, id, fix_pkt_size,interval=0.01):
+    def __init__(self,env, id, ONU, fix_pkt_size,interval=0.01):
         self.interval = interval
-        PacketGenerator.__init__(self,env, id, fix_pkt_size)
+        PacketGenerator.__init__(self,env, id, ONU, fix_pkt_size)
     def run(self):
         """The generator function used in simulations.
         """
@@ -196,14 +207,16 @@ class CBR_PG(PacketGenerator):
             if self.fix_pkt_size:
                 p = Packet(self.env.now, self.fix_pkt_size, self.packets_sent, src=self.id)
                 pkt_file.write("{},{},{}\n".format(self.env.now,self.interval,self.fix_pkt_size))
+            msg = {'buffer_size':p.size,'ONU':self.ONU}
+            self.ONU.odn.directly_upstream(self.ONU,msg)
             self.out.put(p) # put the packet in ONU port
 
 class poisson_PG(PacketGenerator):
     """This class represents the poisson distribution packet generation process """
-    def __init__(self,env, id, adist, sdist, fix_pkt_size):
+    def __init__(self,env, id, ONU, adist, sdist, fix_pkt_size):
         self.arrivals_dist = adist #packet arrivals distribution
         self.size_dist = sdist #packet size distribution
-        PacketGenerator.__init__(self,env, id, fix_pkt_size, finish=float("inf"))
+        PacketGenerator.__init__(self,env, id, ONU, fix_pkt_size, finish=float("inf"))
     def run(self):
         """The generator function used in simulations.
         """
@@ -413,6 +426,7 @@ class ONUPort(object):
 class ONU(object):
     def __init__(self,distance,oid,env,lamb,odn,qlimit,bucket,packet_gen,pg_param):
         self.env = env
+        self.odn= odn
         self.grant_report_store = simpy.Store(self.env) #Simpy Stores grant usage report
         self.request_container = simpy.Container(env, init=2, capacity=2)
         self.grant_report = []
@@ -423,14 +437,14 @@ class ONU(object):
         self.newArrived = 0
         self.last_req_buffer = 0
         self.request_counter = 0
-        self.pg = packet_gen(self.env, "bbmp", **pg_param) #creates the packet generator
+        self.pg = packet_gen(self.env, "bbmp", self, **pg_param) #creates the packet generator
         if qlimit == 0:# checks if the queue has a size limit
             queue_limit = None
         else:
             queue_limit = qlimit
         self.port = ONUPort(self.env, qlimit=queue_limit)#create ONU PORT
         self.pg.out = self.port #forward packet generator output to ONU port
-        self.sender = self.env.process(self.ONU_sender(odn))
+        #self.sender = self.env.process(self.ONU_sender(odn))
         self.receiver = self.env.process(self.ONU_receiver(odn))
         self.bucket = bucket #Bucket size
         self.lamb = lamb # wavelength lambda
@@ -497,7 +511,7 @@ class ONU(object):
             yield self.env.timeout(self.delay) # propagation delay
 
             #Signals the end of grant processing to allow new requests
-            yield self.grant_report_store.put(pred_grant_usage_report)
+            #yield self.grant_report_store.put(pred_grant_usage_report)
 ################################################################
     #IPACT
     def ONU_sender(self, odn):
@@ -579,6 +593,41 @@ class IPACT(DBA):
 
             # timeout until the end of grant to then get next grant request
             yield self.env.timeout(delay+grant_time + self.guard_interval)
+
+class MDBA(DBA):
+    def __init__(self,env,max_grant_size,grant_store):
+        DBA.__init__(self,env,max_grant_size,grant_store)
+        self.counter = simpy.Resource(self.env, capacity=1)#create a queue of requests to DBA
+        self.next_grant = 0
+
+
+    def dba(self,ONU,buffer_size):
+        with self.counter.request() as my_turn:
+            """ DBA only process one request at a time """
+            yield my_turn
+            time_stamp = self.env.now # timestamp dba starts processing the request
+            delay = ONU.delay # oneway delay
+
+            # check if max grant size is enabled
+            if self.max_grant_size > 0 and buffer_size > self.max_grant_size:
+                buffer_size = self.max_grant_size
+            bits = buffer_size * 8
+            sending_time = 	bits/float(10000000000) #buffer transmission time
+            grant_time = delay + sending_time
+            if self.next_grant == 0:
+                grant_final_time = self.env.now + grant_time # timestamp for grant end
+            else:
+                grant_final_time = self.next_grant + grant_time # timestamp for grant end
+            counter = Grant_ONU_counter[ONU.oid] # Grant message counter per ONU
+            # write grant log
+            grant_time_file.write( "{},{},{},{},{},{},{},{}\n".format(MAC_TABLE['olt'], MAC_TABLE[ONU.oid],"02", time_stamp,counter, ONU.oid,self.env.now,grant_final_time) )
+            # construct grant message
+            grant = {'ONU':ONU,'grant_size': buffer_size, 'grant_final_time': grant_final_time, 'prediction': None}
+            self.grant_store.put(grant) # send grant to OLT
+            Grant_ONU_counter[ONU.oid] += 1
+
+            # timeout until the end of grant to then get next grant request
+            self.next_grant = grant_final_time + delay + self.guard_interval
 
 class MTP(DBA):
     def __init__(self,env,max_grant_size,grant_store,numberONUs,NThreads=2):
@@ -942,6 +991,8 @@ class OLT(object):
         #choosing algorithms
         if dba == "pd_dba":
             self.dba = PD_DBA(self.env, max_grant_size, self.grant_store,window,predict,model)
+        elif dba == "mdba":
+            self.dba = MDBA(self.env, max_grant_size, self.grant_store)
         else:
             self.dba = IPACT(self.env, max_grant_size, self.grant_store)
 
