@@ -201,9 +201,17 @@ class PacketGenerator(object):
 
 class CBR_PG(PacketGenerator):
     """This class represents the Constant Bit Rate packet generation process """
-    def __init__(self,env, id, ONU, fix_pkt_size,interval=0.01):
+    def __init__(self,env, id, ONU, fix_pkt_size,interval=0.004):
         self.interval = interval
         PacketGenerator.__init__(self,env, id, ONU, fix_pkt_size)
+        if fix_pkt_size == 768000:
+            self.eth_overhead = 0.00001562
+        elif fix_pkt_size == 1536000:
+            self.eth_overhead = 0.00003004
+        elif fix_pkt_size == 3072000:
+            self.eth_overhead = 0.00005887
+        else:
+            self.eth_overhead = 0.00007329
     def run(self):
         """The generator function used in simulations.
         """
@@ -211,14 +219,19 @@ class CBR_PG(PacketGenerator):
         while self.env.now < self.finish:
             # wait for next transmission
             yield self.env.timeout(self.interval)
-            self.packets_sent += 1
-            if self.fix_pkt_size:
-                p = Packet(self.env.now, self.fix_pkt_size, self.packets_sent, src=self.id)
+
+
+            npkt = self.fix_pkt_size / 1500
+            npkt = (npkt*4)/10
+            self.env.timeout(self.eth_overhead)
+            for i in range(npkt):
+                self.packets_sent += 1
+                p = Packet(self.env.now, 1500, self.packets_sent, src=self.id)
                 pkt_file.write("{},{},{}\n".format(self.env.now,self.interval,self.fix_pkt_size))
 
-            msg = {'buffer_size':p.size,'ONU':self.ONU}
-            self.ONU.odn.directly_upstream(self.ONU,msg)
-            self.out.put(p) # put the packet in ONU port
+                msg = {'buffer_size':p.size,'ONU':self.ONU}
+                self.ONU.odn.directly_upstream(self.ONU,msg)
+                self.out.put(p) # put the packet in ONU port
 
 class poisson_PG(PacketGenerator):
     """This class represents the poisson distribution packet generation process """
