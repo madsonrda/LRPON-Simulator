@@ -207,6 +207,7 @@ class CBR_PG(PacketGenerator):
     def run(self):
         """The generator function used in simulations.
         """
+        yield self.env.timeout(random.expovariate(100))
         while self.env.now < self.finish:
             # wait for next transmission
             yield self.env.timeout(self.interval)
@@ -214,9 +215,9 @@ class CBR_PG(PacketGenerator):
             if self.fix_pkt_size:
                 p = Packet(self.env.now, self.fix_pkt_size, self.packets_sent, src=self.id)
                 pkt_file.write("{},{},{}\n".format(self.env.now,self.interval,self.fix_pkt_size))
-            if DBA_ALGORITHM == "mpd_dba" or DBA_ALGORITHM == "mdba":
-                msg = {'buffer_size':p.size,'ONU':self.ONU}
-                self.ONU.odn.directly_upstream(self.ONU,msg)
+
+            msg = {'buffer_size':p.size,'ONU':self.ONU}
+            self.ONU.odn.directly_upstream(self.ONU,msg)
             self.out.put(p) # put the packet in ONU port
 
 class poisson_PG(PacketGenerator):
@@ -284,10 +285,11 @@ class poisson_PG(PacketGenerator):
 
 class ONUPort(object):
 
-    def __init__(self, env, qlimit=None):
+    def __init__(self, env, ONU, qlimit=None):
         self.buffer = simpy.Store(env)#buffer
         self.grant_real_usage = simpy.Store(env) # Used in grant prediction report
         self.grant_size = 0
+        self.ONU = ONU
         self.grant_final_time = 0
         self.predicted_grant = False #flag if it is a predicted grant
         self.guard_interval = 0.000001
@@ -331,7 +333,7 @@ class ONUPort(object):
 
 
 
-    def send(self,ONU_id):
+    def send(self):
         """ process to send pkts
         """
         self.grant_loop = True #flag if grant time is being used
@@ -383,15 +385,16 @@ class ONUPort(object):
                 break
 
             #write the pkt transmission delay
-            delay_file.write( "{},{}\n".format( ONU_id, (self.env.now - pkt.time) ) )
+            delay_file.write( "{},{}\n".format( self.ONU.oid, (self.env.now - pkt.time) ) )
             self.current_grant_delay.append(self.env.now - pkt.time)
             if self.predicted_grant:
-                delay_prediction_file.write( "{},{}\n".format( ONU_id, (self.env.now - pkt.time) ) )
+                delay_prediction_file.write( "{},{}\n".format( self.ONU.oid, (self.env.now - pkt.time) ) )
 
             else:
-                delay_normal_file.write( "{},{}\n".format( ONU_id, (self.env.now - pkt.time) ) )
-
+                delay_normal_file.write( "{},{}\n".format( self.ONU.oid, (self.env.now - pkt.time) ) )
+            print ("{} - pkt sent onu{}:".format(self.env.now,self.ONU.oid))
             yield self.env.timeout(sending_time)
+            print ("{} - arrived at OLT onu{}:".format(self.env.now + self.ONU.delay,self.ONU.oid))
 
             end_pkt_usage = self.env.now
             end_grant_usage += end_pkt_usage - start_pkt_usage
@@ -405,7 +408,6 @@ class ONUPort(object):
             self.grant_real_usage.put( [start_grant_usage , start_grant_usage + end_grant_usage] )
         else:
             #logging.debug("buffer_size:{}, grant duration:{}".format(b,grant_timeout))
-            print why_break
             self.grant_real_usage.put([])# send a empty list
 
 
@@ -441,7 +443,7 @@ class ONU(object):
         self.grant_report = []
         self.distance = distance #fiber distance
         self.oid = oid #ONU indentifier
-        self.delay = self.distance/ float(210000) # fiber propagation delay
+        self.delay = self.distance/ float(200000) # fiber propagation delay
         self.excess = 0 #difference between the size of the request and the grant
         self.newArrived = 0
         self.last_req_buffer = 0
@@ -451,10 +453,9 @@ class ONU(object):
             queue_limit = None
         else:
             queue_limit = qlimit
-        self.port = ONUPort(self.env, qlimit=queue_limit)#create ONU PORT
+        self.port = ONUPort(self.env, self, qlimit=queue_limit)#create ONU PORT
         self.pg.out = self.port #forward packet generator output to ONU port
-        if not (DBA_ALGORITHM == "mpd_dba" or DBA_ALGORITHM == "mdba"):
-            self.sender = self.env.process(self.ONU_sender(odn))
+        #self.sender = self.env.process(self.ONU_sender(odn))
         self.receiver = self.env.process(self.ONU_receiver(odn))
         self.bucket = bucket #Bucket size
         self.lamb = lamb # wavelength lambda
@@ -466,21 +467,16 @@ class ONU(object):
             grant = yield odn.get_grant(self.oid)#waiting for a grant
             pred_grant_usage_report = [] # grant prediction report list
             # real start and endtime used report to OLT
-
             try:
-                # print grant['grant_final_time']
-                # print self.oid
                 next_grant = grant['grant_start_time'] - self.env.now #time until next grant begining
                 yield self.env.timeout(next_grant)  #wait for the next grant
             except Exception as e:
                 pass
-                #print grant['grant_start_time']
-                #print self.env.now
 
             self.excess = self.last_req_buffer - grant['grant_size'] #update the excess
             self.port.set_grant(grant,False) #grant info to onu port
 
-            sent_pkt = self.env.process(self.port.send(self.oid)) # send pkts during grant time
+            sent_pkt = self.env.process(self.port.send()) # send pkts during grant time
             yield sent_pkt # wait grant be used
             grant_usage = yield self.port.grant_real_usage.get() # get grant real utilisation
             if len(grant_usage) == 0: #debug
@@ -489,7 +485,6 @@ class ONU(object):
 
             # Prediction stage
             if grant['prediction']:#check if have any predicion in the grant
-
                 self.port.reset_curret_grant_delay()
                 for pred in grant['prediction']:
                     # construct grant pkt
@@ -504,7 +499,7 @@ class ONU(object):
                         break
 
                     self.port.set_grant(pred_grant,True) #grant info to onu port
-                    sent_pkt = self.env.process(self.port.send(self.oid))#sending predicted messages
+                    sent_pkt = self.env.process(self.port.send())#sending predicted messages
                     yield sent_pkt # wait grant be used
                     grant_usage = yield self.port.grant_real_usage.get() # get grant real utilisation
                     yield self.env.timeout(self.delay) # wait grant propagation delay
@@ -532,8 +527,7 @@ class ONU(object):
             yield self.env.timeout(self.delay) # propagation delay
 
             #Signals the end of grant processing to allow new requests
-            if not (DBA_ALGORITHM == "mpd_dba" or DBA_ALGORITHM == "mdba"):
-                yield self.grant_report_store.put(pred_grant_usage_report)
+            #yield self.grant_report_store.put(pred_grant_usage_report)
 ################################################################
     #IPACT
     def ONU_sender(self, odn):
@@ -609,7 +603,7 @@ class IPACT(DBA):
             # write grant log
             grant_time_file.write( "{},{},{},{},{},{},{},{}\n".format(MAC_TABLE['olt'], MAC_TABLE[ONU.oid],"02", time_stamp,counter, ONU.oid,self.env.now,grant_final_time) )
             # construct grant message
-            grant = {'ONU':ONU,'grant_size': buffer_size, 'grant_start_time': self.env.now , 'grant_final_time': grant_final_time, 'prediction': None}
+            grant = {'ONU':ONU,'grant_size': buffer_size, 'grant_final_time': grant_final_time, 'prediction': None}
             self.grant_store.put(grant) # send grant to OLT
             Grant_ONU_counter[ONU.oid] += 1
 
@@ -629,23 +623,27 @@ class MDBA(DBA):
             yield my_turn
             time_stamp = self.env.now # timestamp dba starts processing the request
             delay = ONU.delay # oneway delay
-            yield self.env.timeout(self.guard_interval)
 
             # check if max grant size is enabled
             if self.max_grant_size > 0 and buffer_size > self.max_grant_size:
                 buffer_size = self.max_grant_size
             bits = buffer_size * 8
             sending_time = 	bits/float(10000000000) #buffer transmission time
-            grant_time = delay + sending_time
             ini = max(self.env.now,self.next_grant)
+            if ini == self.env.now:
+                grant_time = delay + sending_time
+            else:
+                grant_time = sending_time
+
             grant_final_time = ini + grant_time # timestamp for grant end
             counter = Grant_ONU_counter[ONU.oid] # Grant message counter per ONU
             # write grant log
             grant_time_file.write( "{},{},{},{},{},{},{},{}\n".format(MAC_TABLE['olt'], MAC_TABLE[ONU.oid],"02", time_stamp,counter, ONU.oid,self.env.now,grant_final_time) )
             # construct grant message
-            grant = {'ONU':ONU,'grant_size': buffer_size,'grant_start_time':ini ,'grant_final_time': grant_final_time, 'prediction': None}
+            grant = {'ONU':ONU,'grant_size': buffer_size, 'grant_start_time': ini , 'grant_final_time': grant_final_time, 'prediction': None}
             self.grant_store.put(grant) # send grant to OLT
             Grant_ONU_counter[ONU.oid] += 1
+            print ("{} - grant onu{}: start={} ,final={}".format(self.env.now,ONU.oid,ini,grant_final_time))
 
             # timeout until the end of grant to then get next grant request
             self.next_grant = grant_final_time + delay + self.guard_interval
@@ -996,7 +994,7 @@ class PD_DBA(DBA):
 
             #grant_time_file.write( "{},{},{}\n".format(ONU.oid,self.env.now,grant_final_time) )
             # construct grant message
-            grant = {'ONU':ONU,'grant_size': buffer_size, 'grant_start_time': self.env.now , 'grant_final_time': grant_final_time, 'prediction': predictions}
+            grant = {'ONU':ONU,'grant_size': buffer_size, 'grant_final_time': grant_final_time, 'prediction': predictions}
 
             self.grant_store.put(grant) # send grant to OLT
 
@@ -1037,7 +1035,6 @@ class MPD_DBA(DBA):
                     break
 
             j+=1
-
         #drop: if there is overlap between standard grant and first prediction
         if predictions is not None and (self.grant_history[ONU.oid]['end'][-1] +ONU.delay+ self.guard_interval) > predictions[0][0]:
             predictions = None
@@ -1076,7 +1073,7 @@ class MPD_DBA(DBA):
             yield my_turn
             time_stamp = self.env.now
             delay = ONU.delay
-            yield self.env.timeout(self.guard_interval)
+
             if len(ONU.grant_report) > 0:
                 # if predictions where utilized, update history with real grant usage
                 for report in ONU.grant_report:
@@ -1094,7 +1091,7 @@ class MPD_DBA(DBA):
             grant_final_time = ini + grant_time # timestamp for grant end
 
             # Update grant history with grant requested
-            self.grant_history[ONU.oid]['start'].append(ini)
+            self.grant_history[ONU.oid]['start'].append(self.env.now)
             self.grant_history[ONU.oid]['end'].append(grant_final_time)
             if len(self.grant_history[ONU.oid]['counter']) > 0:
                 self.grant_history[ONU.oid]['counter'].append( self.grant_history[ONU.oid]['counter'][-1] + 1  )
@@ -1108,8 +1105,8 @@ class MPD_DBA(DBA):
                 predictions = self.predictor(ONU.oid) # start predictor process
 
                 #drop if the predictions have overlap
-                # if predictions is not None:
-                #     predictions = self.drop_overlap(predictions,ONU)
+                if predictions is not None:
+                    predictions = self.drop_overlap(predictions,ONU)
 
                 if predictions is not None:
                     self.predictions_counter_array[ONU.oid] = len(predictions)
@@ -1117,7 +1114,7 @@ class MPD_DBA(DBA):
 
                 #grant_time_file.write( "{},{},{}\n".format(ONU.oid,self.env.now,grant_final_time) )
                 # construct grant message
-                grant = {'ONU':ONU,'grant_size': buffer_size,'grant_start_time':ini , 'grant_final_time': grant_final_time, 'prediction': predictions}
+                grant = {'ONU':ONU,'grant_size': buffer_size, 'grant_final_time': grant_final_time, 'prediction': predictions}
 
                 self.grant_store.put(grant) # send grant to OLT
 
