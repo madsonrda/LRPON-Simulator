@@ -223,14 +223,16 @@ class CBR_PG(PacketGenerator):
 
             npkt = self.fix_pkt_size / 1500
             npkt = (npkt*4)/10
-            self.env.timeout(self.eth_overhead)
+            p_list = []
             for i in range(npkt):
                 self.packets_sent += 1
                 p = Packet(self.env.now, 1500, self.packets_sent, src=self.id)
+                p_list.append(p)
                 pkt_file.write("{},{},{}\n".format(self.env.now,self.interval,self.fix_pkt_size))
-
-                msg = {'buffer_size':p.size,'ONU':self.ONU}
-                self.ONU.odn.directly_upstream(self.ONU,msg)
+            self.env.timeout(self.eth_overhead)
+            msg = {'buffer_size':npkt*1500,'ONU':self.ONU}
+            self.ONU.odn.directly_upstream(self.ONU,msg)
+            for p in p_list:
                 self.out.put(p) # put the packet in ONU port
 
 class poisson_PG(PacketGenerator):
@@ -398,16 +400,23 @@ class ONUPort(object):
                 break
 
             #write the pkt transmission delay
-            delay_file.write( "{},{}\n".format( self.ONU.oid, (self.env.now - pkt.time) ) )
+            #delay_file.write( "{},{}\n".format( self.ONU.oid, (self.env.now - pkt.time) ) )
             self.current_grant_delay.append(self.env.now - pkt.time)
+            # if self.predicted_grant:
+            #     delay_prediction_file.write( "{},{}\n".format( self.ONU.oid, (self.env.now - pkt.time) ) )
+            #
+            # else:
+            #     delay_normal_file.write( "{},{}\n".format( self.ONU.oid, (self.env.now - pkt.time) ) )
+            #print ("{} - pkt sent onu{}:".format(self.env.now,self.ONU.oid))
+            yield self.env.timeout(sending_time)
+            #print ("{} - arrived at OLT onu{}:".format(self.env.now + self.ONU.delay,self.ONU.oid))
+            delay_file.write( "{},{}\n".format( self.ONU.oid, (self.env.now - pkt.time)+self.ONU.delay ) )
             if self.predicted_grant:
-                delay_prediction_file.write( "{},{}\n".format( self.ONU.oid, (self.env.now - pkt.time) ) )
+                delay_prediction_file.write( "{},{}\n".format( self.ONU.oid, (self.env.now - pkt.time)+self.ONU.delay ) )
 
             else:
-                delay_normal_file.write( "{},{}\n".format( self.ONU.oid, (self.env.now - pkt.time) ) )
-            print ("{} - pkt sent onu{}:".format(self.env.now,self.ONU.oid))
-            yield self.env.timeout(sending_time)
-            print ("{} - arrived at OLT onu{}:".format(self.env.now + self.ONU.delay,self.ONU.oid))
+                delay_normal_file.write( "{},{}\n".format( self.ONU.oid, (self.env.now - pkt.time)+self.ONU.delay ) )
+
 
             end_pkt_usage = self.env.now
             end_grant_usage += end_pkt_usage - start_pkt_usage
@@ -420,6 +429,7 @@ class ONUPort(object):
             #send the real grant usage
             self.grant_real_usage.put( [start_grant_usage , start_grant_usage + end_grant_usage] )
         else:
+            #print why_break
             #logging.debug("buffer_size:{}, grant duration:{}".format(b,grant_timeout))
             self.grant_real_usage.put([])# send a empty list
 
@@ -491,6 +501,7 @@ class ONU(object):
 
             sent_pkt = self.env.process(self.port.send()) # send pkts during grant time
             yield sent_pkt # wait grant be used
+            #print ("{} - arrived at OLT onu{}:".format(self.env.now + self.delay,self.oid))
             grant_usage = yield self.port.grant_real_usage.get() # get grant real utilisation
             if len(grant_usage) == 0: #debug
                 logging.debug("Error in grant_usage")
@@ -656,7 +667,7 @@ class MDBA(DBA):
             grant = {'ONU':ONU,'grant_size': buffer_size, 'grant_start_time': ini , 'grant_final_time': grant_final_time, 'prediction': None}
             self.grant_store.put(grant) # send grant to OLT
             Grant_ONU_counter[ONU.oid] += 1
-            print ("{} - grant onu{}: start={} ,final={}".format(self.env.now,ONU.oid,ini,grant_final_time))
+            #print ("{} - grant onu{}: start={} ,final={}".format(self.env.now,ONU.oid,ini,grant_final_time))
 
             # timeout until the end of grant to then get next grant request
             self.next_grant = grant_final_time + delay + self.guard_interval
