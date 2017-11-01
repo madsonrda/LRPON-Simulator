@@ -6,7 +6,7 @@ for seed in 20 30 40 50 60 70 80 90 100 110
 do
    for pkt in 768000 1536000 3072000 3840000
    do
-      python g-sim.py pdba -O 3 -b 9000 -t 5 -T cbr -w 5 -p 5 -s $seed -e $pkt &
+      python g-sim.py pd_dba -O 3 -b 9000 -d 20 -t 5 -T cbr -w 5 -p 5 -s $seed -P $pkt &
    done
-   sleep 60
+   sleep 300
 done

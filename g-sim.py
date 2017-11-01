@@ -51,7 +51,7 @@ TRAFFIC = args.traffic
 SIM_DURATION = args.time
 PKT_SIZE = args.packetsize
 
-
+EXPONENT = PKT_SIZE
 
 #settings
 
@@ -127,8 +127,8 @@ grant_time_file.write("source address,destination address,opcode,timestamp,count
 pkt_file.write("timestamp,adist,size\n")
 overlap_file.write("interval\n")
 
-mse_file = open("csv/{}-{}-{}-{}-{}-{}-{}-mse.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT),"w")
-mse_file.write("mse_start,mse_end,delay\n")
+#mse_file = open("csv/{}-{}-{}-{}-{}-{}-{}-mse.csv".format(DBA_ALGORITHM,NUMBER_OF_ONUs,MAX_BUCKET_SIZE,MAX_GRANT_SIZE,DISTANCE,RANDOM_SEED,EXPONENT),"w")
+#mse_file.write("mse_start,mse_end,delay\n")
 
 class ODN(object):
     """This class represents optical distribution Network."""
@@ -544,9 +544,9 @@ class ONU(object):
                     # print delay
                     delay.append(-1)
                 len_usage = len(pred_grant_usage_report)
-                mse_start = mse(np.array(pred_grant_usage_report)[:,0],np.array(grant['prediction'][:len_usage])[:,0])
-                mse_end = mse(np.array(pred_grant_usage_report)[:,1],np.array(grant['prediction'][:len_usage])[:,1])
-                mse_file.write("{},{},{}\n".format(mse_start,mse_end,np.mean(delay)))
+                #mse_start = mse(np.array(pred_grant_usage_report)[:,0],np.array(grant['prediction'][:len_usage])[:,0])
+                #mse_end = mse(np.array(pred_grant_usage_report)[:,1],np.array(grant['prediction'][:len_usage])[:,1])
+                #mse_file.write("{},{},{}\n".format(mse_start,mse_end,np.mean(delay)))
             self.port.reset_curret_grant_delay()
             yield self.env.timeout(self.delay) # propagation delay
 
@@ -1218,5 +1218,5 @@ delay_normal_file.close()
 delay_prediction_file.close()
 grant_time_file.close()
 pkt_file.close()
-mse_file.close
+#mse_file.close
 overlap_file.close()
