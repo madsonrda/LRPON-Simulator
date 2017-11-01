@@ -230,8 +230,9 @@ class CBR_PG(PacketGenerator):
                 p_list.append(p)
                 pkt_file.write("{},{},{}\n".format(self.env.now,self.interval,self.fix_pkt_size))
             self.env.timeout(self.eth_overhead)
-            msg = {'buffer_size':npkt*1500,'ONU':self.ONU}
-            self.ONU.odn.directly_upstream(self.ONU,msg)
+            if DBA_ALGORITHM == "mdba":
+                msg = {'buffer_size':npkt*1500,'ONU':self.ONU}
+                self.ONU.odn.directly_upstream(self.ONU,msg)
             for p in p_list:
                 self.out.put(p) # put the packet in ONU port
 
@@ -466,7 +467,7 @@ class ONU(object):
         self.grant_report = []
         self.distance = distance #fiber distance
         self.oid = oid #ONU indentifier
-        self.delay = self.distance/ float(200000) # fiber propagation delay
+        self.delay = self.distance/float(200000) # fiber propagation delay
         self.excess = 0 #difference between the size of the request and the grant
         self.newArrived = 0
         self.last_req_buffer = 0
@@ -478,7 +479,8 @@ class ONU(object):
             queue_limit = qlimit
         self.port = ONUPort(self.env, self, qlimit=queue_limit)#create ONU PORT
         self.pg.out = self.port #forward packet generator output to ONU port
-        #self.sender = self.env.process(self.ONU_sender(odn))
+        if DBA_ALGORITHM != "mdba":
+            self.sender = self.env.process(self.ONU_sender(odn))
         self.receiver = self.env.process(self.ONU_receiver(odn))
         self.bucket = bucket #Bucket size
         self.lamb = lamb # wavelength lambda
@@ -551,7 +553,8 @@ class ONU(object):
             yield self.env.timeout(self.delay) # propagation delay
 
             #Signals the end of grant processing to allow new requests
-            #yield self.grant_report_store.put(pred_grant_usage_report)
+            if DBA_ALGORITHM != "mdba":
+                yield self.grant_report_store.put(pred_grant_usage_report)
 ################################################################
     #IPACT
     def ONU_sender(self, odn):
