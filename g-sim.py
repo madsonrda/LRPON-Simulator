@@ -428,6 +428,7 @@ class ONUPort(object):
         self.grant_loop = False #flag if grant time is being used
         if start_grant_usage and end_grant_usage > 0:# if any pkt has been sent
             #send the real grant usage
+            yield self.env.timeout(self.ONU.delay) # propagation delay
             self.grant_real_usage.put( [start_grant_usage , start_grant_usage + end_grant_usage] )
         else:
             #print why_break
@@ -512,7 +513,6 @@ class ONU(object):
             grant_usage = yield self.port.grant_real_usage.get() # get grant real utilisation
             if len(grant_usage) == 0: #debug
                 logging.debug("Error in grant_usage")
-            #yield self.env.timeout(self.delay)
 
             # Prediction stage
             if grant['prediction']:#check if have any predicion in the grant
@@ -538,7 +538,6 @@ class ONU(object):
                     sent_pkt = self.env.process(self.port.send())#sending predicted messages
                     yield sent_pkt # wait grant be used
                     grant_usage = yield self.port.grant_real_usage.get() # get grant real utilisation
-                    yield self.env.timeout(self.delay) # wait grant propagation delay
                     if len(grant_usage) > 0: # filling grant prediction report list
                         pred_grant_usage_report.append(grant_usage)
                         #logging.debug("{}:pred={},usage={}".format(self.env.now,pred,grant_usage))
@@ -560,7 +559,6 @@ class ONU(object):
                 #mse_end = mse(np.array(pred_grant_usage_report)[:,1],np.array(grant['prediction'][:len_usage])[:,1])
                 #mse_file.write("{},{},{}\n".format(mse_start,mse_end,np.mean(delay)))
             self.port.reset_curret_grant_delay()
-            yield self.env.timeout(self.delay) # propagation delay
             self.channel.freechannel(self.oid)
 
             #Signals the end of grant processing to allow new requests
