@@ -459,9 +459,10 @@ class ONUPort(object):
             self.buffer.put(pkt)
 
 class ONU(object):
-    def __init__(self,distance,oid,env,lamb,odn,qlimit,bucket,packet_gen,pg_param):
+    def __init__(self,distance,oid,env,lamb,channel,odn,qlimit,bucket,packet_gen,pg_param):
         self.env = env
         self.odn= odn
+        self.channel = channel
         self.grant_report_store = simpy.Store(self.env) #Simpy Stores grant usage report
         self.request_container = simpy.Container(env, init=2, capacity=2)
         self.grant_report = []
@@ -500,6 +501,10 @@ class ONU(object):
 
             self.excess = self.last_req_buffer - grant['grant_size'] #update the excess
             self.port.set_grant(grant,False) #grant info to onu port
+            if self.channel.getchannel() == 0:
+                self.channel.blockchannel(self.oid)
+            else:
+                print ("{} - COLLISION".format(self.env.now))
 
             sent_pkt = self.env.process(self.port.send()) # send pkts during grant time
             yield sent_pkt # wait grant be used
@@ -513,6 +518,7 @@ class ONU(object):
             if grant['prediction']:#check if have any predicion in the grant
                 self.port.reset_curret_grant_delay()
                 for pred in grant['prediction']:
+                    self.channel.freechannel(self.oid)
                     # construct grant pkt
                     pred_grant = {'grant_size': grant['grant_size'], 'grant_final_time': pred[1]}
                     #wait next cycle
@@ -525,6 +531,10 @@ class ONU(object):
                         break
 
                     self.port.set_grant(pred_grant,True) #grant info to onu port
+                    if self.channel.getchannel() == 0:
+                        self.channel.blockchannel(self.oid)
+                    else:
+                        print ("{} - COLLISION in Pred".format(self.env.now))
                     sent_pkt = self.env.process(self.port.send())#sending predicted messages
                     yield sent_pkt # wait grant be used
                     grant_usage = yield self.port.grant_real_usage.get() # get grant real utilisation
@@ -551,6 +561,7 @@ class ONU(object):
                 #mse_file.write("{},{},{}\n".format(mse_start,mse_end,np.mean(delay)))
             self.port.reset_curret_grant_delay()
             yield self.env.timeout(self.delay) # propagation delay
+            self.channel.freechannel(self.oid)
 
             #Signals the end of grant processing to allow new requests
             if DBA_ALGORITHM != "mdba":
@@ -1184,6 +1195,19 @@ class OLT(object):
             self.env.process(self.dba.dba(request['ONU'],request['buffer_size']))
 
 
+class collisionDetection(object):
+    def __init__(self):
+        self.chanel=0
+        self.whoIsUsing = None
+    def getchannel(self):
+        return self.chanel
+    def blockchannel(self,oid):
+        self.chanel = 1
+        self.whoIsUsing = oid
+    def freechannel(self,oid):
+        if self.whoIsUsing == oid:
+            self.chanel = 0
+
 #starts the simulator environment
 random.seed(RANDOM_SEED)
 env = simpy.Environment()
@@ -1204,13 +1228,14 @@ else:
 ONU_List = []
 #lambda esta improvisado aqui criar por argumento
 lamb = 0
+channel = collisionDetection()
 for i in range(NUMBER_OF_ONUs):
     MAC_TABLE[i] = "00:00:00:00:{}:{}".format(random.randint(0x00, 0xff),random.randint(0x00, 0xff))
     Grant_ONU_counter[i] = 0
 MAC_TABLE['olt'] = "ff:ff:ff:ff:00:01"
 for i in range(NUMBER_OF_ONUs):
     distance= DISTANCE
-    ONU_List.append(ONU(distance,i,env,lamb,odn,ONU_QUEUE_LIMIT,MAX_BUCKET_SIZE,packet_gen,pg_param))
+    ONU_List.append(ONU(distance,i,env,lamb,channel,odn,ONU_QUEUE_LIMIT,MAX_BUCKET_SIZE,packet_gen,pg_param))
 
 #creates OLT
 olt = OLT(env,lamb,odn,MAX_GRANT_SIZE,DBA_ALGORITHM,WINDOW,PREDICT,MODEL,NUMBER_OF_ONUs)
