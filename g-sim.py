@@ -230,7 +230,7 @@ class CBR_PG(PacketGenerator):
                 p_list.append(p)
                 pkt_file.write("{},{},{}\n".format(self.env.now,self.interval,self.fix_pkt_size))
             self.env.timeout(self.eth_overhead)
-            if DBA_ALGORITHM == "mdba":
+            if DBA_ALGORITHM == "mdba" or DBA_ALGORITHM == "mpd_dba":
                 msg = {'buffer_size':npkt*1500,'ONU':self.ONU}
                 self.ONU.odn.directly_upstream(self.ONU,msg)
             for p in p_list:
@@ -489,7 +489,7 @@ class ONU(object):
             queue_limit = qlimit
         self.port = ONUPort(self.env, self, qlimit=queue_limit)#create ONU PORT
         self.pg.out = self.port #forward packet generator output to ONU port
-        if DBA_ALGORITHM != "mdba":
+        if not (DBA_ALGORITHM == "mdba" or DBA_ALGORITHM == "mpd_dba"):
             self.sender = self.env.process(self.ONU_sender(odn))
         self.receiver = self.env.process(self.ONU_receiver(odn))
         self.bucket = bucket #Bucket size
@@ -570,8 +570,10 @@ class ONU(object):
             self.channel.freechannel(self.oid)
 
             #Signals the end of grant processing to allow new requests
-            if DBA_ALGORITHM != "mdba":
+            if not (DBA_ALGORITHM == "mdba" or DBA_ALGORITHM == "mpd_dba"):
                 yield self.grant_report_store.put(pred_grant_usage_report)
+            else:
+                self.grant_report = pred_grant_usage_report
 ################################################################
     #IPACT
     def ONU_sender(self, odn):
@@ -1133,47 +1135,71 @@ class MPD_DBA(DBA):
 
         self.model = MultiOutputRegressor(reg)
 
-    def drop_overlap(self,predictions,ONU):
-        predcp = list(predictions)
-        j = 1
-        #drop: if there are overlaps between the predictions
-        for p in predcp[:-1]:
-            for q in predcp[j:]:
-                if p[1] + ONU.delay  > q[0]:
-                    predictions = None
-                    break
-
-            j+=1
-        #drop: if there is overlap between standard grant and first prediction
-        if predictions is not None and (self.grant_history[ONU.oid]['end'][-1] +ONU.delay+ self.guard_interval) > predictions[0][0]:
-            predictions = None
-
-
-        return predictions
-
-    def predictor(self, ONU_id):
+    def predictor(self, ONU):
         # check if there's enough observations to fill window
 
-        if len( self.grant_history[ONU_id]['start'] ) >= self.window :
+        if len( self.grant_history[ONU.oid]['start'] ) >= self.window :
             #reduce the grant history to the window size
-            self.grant_history[ONU_id]['start'] = self.grant_history[ONU_id]['start'][-self.window:]
-            self.grant_history[ONU_id]['end'] = self.grant_history[ONU_id]['end'][-self.window:]
-            self.grant_history[ONU_id]['counter'] = self.grant_history[ONU_id]['counter'][-self.window:]
-            df_tmp = pd.DataFrame(self.grant_history[ONU_id]) # temp dataframe w/ past grants
+            self.grant_history[ONU.oid]['start'] = self.grant_history[ONU.oid]['start'][-self.window:]
+            self.grant_history[ONU.oid]['end'] = self.grant_history[ONU.oid]['end'][-self.window:]
+            self.grant_history[ONU.oid]['counter'] = self.grant_history[ONU.oid]['counter'][-self.window:]
+            df_tmp = pd.DataFrame(self.grant_history[ONU.oid]) # temp dataframe w/ past grants
             # create a list of the next p Grants that will be predicted
-            X_pred = np.arange(self.grant_history[ONU_id]['counter'][-1] +1, self.grant_history[ONU_id]['counter'][-1] + 1 + self.predict).reshape(-1,1)
+            X_pred = np.arange(self.grant_history[ONU.oid]['counter'][-1] +1, self.grant_history[ONU.oid]['counter'][-1] + 1 + self.predict).reshape(-1,1)
 
             # model fitting
             self.model.fit( np.array( df_tmp['counter'] ).reshape(-1,1) , df_tmp[['start','end']] )
             pred = self.model.predict(X_pred) # predicting start and end
 
             predictions = list(pred)
-            #predictions = self.predictions_schedule(predictions)
+            predcp = list(predictions)
+            j = 1
+            #drop: if there are overlaps between the predictions
+            bucket_time = (ONU.bucket*8)/float(10000000000)
+            for p in predcp[:-1]:
+                for q in predcp[j:]:
+                    if p[1] + NUMBER_OF_ONUs*(ONU.delay+bucket_time)  > q[0]:
+                        predictions = None
+                        break
 
-            return predictions
+                j+=1
 
-        else:
-            return  None
+            #drop: if there is overlap between standard grant and first prediction
+            if predictions is not None and (self.grant_history[ONU.oid]['end'][-1] +ONU.delay+ self.guard_interval) > predictions[0][0]:
+                predictions = None
+
+            #drop if there is overlap with predictions array
+            if predictions is not None:
+
+                if len(self.predictions_array) == 0:
+                    self.predictions_array += predictions
+                else:
+                    self.predictions_array = filter(lambda x: x[0] > self.env.now, self.predictions_array)
+                    predcp = list(predictions)
+                    newpred = []
+                    drop = False
+                    for interval1 in predcp:
+                        for interval2 in self.predictions_array:
+                            if interval1[1] > interval2[0]:
+                                if interval1[0] < interval2[0]:
+                                    drop = True
+                                    break
+
+
+                            if interval1[0] < interval2[1]:
+                                if interval1[1] > interval2[1]:
+                                    drop = True
+                                    break
+                        if drop == False:
+                            newpred.append(interval1)
+                        else:
+                            break
+                    if len(newpred)> 0:
+                        predictions = newpred
+                        self.predictions_array += predictions
+                        self.predictions_array = sorted(self.predictions_array,key=lambda x: x[0])
+                    else:
+                        predictions = None
 
 
     def dba(self,ONU,buffer_size):
@@ -1211,11 +1237,7 @@ class MPD_DBA(DBA):
                 self.predictions_counter_array[ONU.oid] -= 1
             else:
                 #PREDICTIONS
-                predictions = self.predictor(ONU.oid) # start predictor process
-
-                #drop if the predictions have overlap
-                if predictions is not None:
-                    predictions = self.drop_overlap(predictions,ONU)
+                predictions = self.predictor(ONU) # start predictor process
 
                 if predictions is not None:
                     self.predictions_counter_array[ONU.oid] = len(predictions)
