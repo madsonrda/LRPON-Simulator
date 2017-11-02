@@ -973,24 +973,80 @@ class PD_DBA(DBA):
         return predictions
 
 
-    def predictor(self, ONU_id):
+    def predictor(self, ONU):
         # check if there's enough observations to fill window
 
-        if len( self.grant_history[ONU_id]['start'] ) >= self.window :
+        if len( self.grant_history[ONU.oid]['start'] ) >= self.window :
             #reduce the grant history to the window size
-            self.grant_history[ONU_id]['start'] = self.grant_history[ONU_id]['start'][-self.window:]
-            self.grant_history[ONU_id]['end'] = self.grant_history[ONU_id]['end'][-self.window:]
-            self.grant_history[ONU_id]['counter'] = self.grant_history[ONU_id]['counter'][-self.window:]
-            df_tmp = pd.DataFrame(self.grant_history[ONU_id]) # temp dataframe w/ past grants
+            self.grant_history[ONU.oid]['start'] = self.grant_history[ONU.oid]['start'][-self.window:]
+            self.grant_history[ONU.oid]['end'] = self.grant_history[ONU.oid]['end'][-self.window:]
+            self.grant_history[ONU.oid]['counter'] = self.grant_history[ONU.oid]['counter'][-self.window:]
+            df_tmp = pd.DataFrame(self.grant_history[ONU.oid]) # temp dataframe w/ past grants
             # create a list of the next p Grants that will be predicted
-            X_pred = np.arange(self.grant_history[ONU_id]['counter'][-1] +1, self.grant_history[ONU_id]['counter'][-1] + 1 + self.predict).reshape(-1,1)
+            X_pred = np.arange(self.grant_history[ONU.oid]['counter'][-1] +1, self.grant_history[ONU.oid]['counter'][-1] + 1 + self.predict).reshape(-1,1)
 
             # model fitting
             self.model.fit( np.array( df_tmp['counter'] ).reshape(-1,1) , df_tmp[['start','end']] )
             pred = self.model.predict(X_pred) # predicting start and end
 
             predictions = list(pred)
-            #predictions = self.predictions_schedule(predictions)
+            predcp = list(predictions)
+            j = 1
+            #drop: if there are overlaps between the predictions
+            bucket_time = (ONU.bucket*8)/float(10000000000)
+            for p in predcp[:-1]:
+                for q in predcp[j:]:
+                    if p[1] + NUMBER_OF_ONUs*(ONU.delay+bucket_time)  > q[0]:
+                        predictions = None
+                        break
+
+                j+=1
+
+            #drop: if there is overlap between standard grant and first prediction
+            if predictions is not None and (self.grant_history[ONU.oid]['end'][-1] +ONU.delay+ self.guard_interval) > predictions[0][0]:
+                predictions = None
+
+            #drop if there is overlap with predictions array
+            if predictions is not None:
+
+                if len(self.predictions_array) == 0:
+                    self.predictions_array += predictions
+                else:
+                    self.predictions_array = filter(lambda x: x[0] > self.env.now, self.predictions_array)
+                    predcp = list(predictions)
+                    newpred = []
+                    drop = False
+                    for interval1 in predcp:
+                        for interval2 in self.predictions_array:
+                            if interval1[1] > interval2[0]:
+                                if interval1[0] < interval2[0]:
+                                    drop = True
+                                    break
+
+
+                            if interval1[0] < interval2[1]:
+                                if interval1[1] > interval2[1]:
+                                    drop = True
+                                    break
+                        if drop == False:
+                            newpred.append(interval1)
+                        else:
+                            break
+                    if len(newpred)> 0:
+                        # print self.predictions_array
+                        # print "KKKK"
+                        # print predictions
+                        # print "KKKK"
+                        # print newpred
+                        # print "######"
+                        predictions = newpred
+                        self.predictions_array += predictions
+                        self.predictions_array = sorted(self.predictions_array,key=lambda x: x[0    ])
+                    else:
+                        predictions = None
+
+
+
 
             return predictions
 
@@ -1021,6 +1077,15 @@ class PD_DBA(DBA):
             grant_final_time = self.env.now + grant_time # timestamp for grant end
 
             # Update grant history with grant requested
+            if len(self.predictions_array) > 0:
+                self.predictions_array = filter(lambda x: x[0] > self.env.now, self.predictions_array)
+                if len(self.predictions_array) > 0:
+                    if (grant_final_time+ONU.delay+self.guard_interval) > self.predictions_array[0][0]:
+                        bits = ONU.bucket * 8
+                        sending_time = 	bits/float(10000000000) #buffer transmission time10g
+                        grant_time = delay + sending_time # one way delay + transmission time
+                        grant_final_time = self.env.now + grant_time # timestamp for grant end
+
             self.grant_history[ONU.oid]['start'].append(self.env.now)
             self.grant_history[ONU.oid]['end'].append(grant_final_time)
             if len(self.grant_history[ONU.oid]['counter']) > 0:
@@ -1029,11 +1094,11 @@ class PD_DBA(DBA):
                 self.grant_history[ONU.oid]['counter'].append( 1 )
 
             #PREDICTIONS
-            predictions = self.predictor(ONU.oid) # start predictor process
+            predictions = self.predictor(ONU) # start predictor process
 
             #drop if the predictions have overlap
-            if predictions is not None:
-                predictions = self.drop_overlap(predictions,ONU)
+            # if predictions is not None:
+            #     predictions = self.drop_overlap(predictions,ONU)
 
 
             #grant_time_file.write( "{},{},{}\n".format(ONU.oid,self.env.now,grant_final_time) )
