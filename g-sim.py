@@ -215,7 +215,7 @@ class CBR_PG(PacketGenerator):
     def run(self):
         """The generator function used in simulations.
         """
-        yield self.env.timeout(random.expovariate(100))
+        yield self.env.timeout(random.expovariate(100)/100)
         while self.env.now < self.finish:
             # wait for next transmission
             yield self.env.timeout(self.interval)
@@ -513,7 +513,7 @@ class ONU(object):
             if self.channel.getchannel() == 0:
                 self.channel.blockchannel(self.oid)
             else:
-                print ("{} - COLLISION".format(self.env.now))
+                logging.debug("{} - COLLISION".format(self.env.now))
 
             sent_pkt = self.env.process(self.port.send()) # send pkts during grant time
             yield sent_pkt # wait grant be used
@@ -542,7 +542,7 @@ class ONU(object):
                     if self.channel.getchannel() == 0:
                         self.channel.blockchannel(self.oid)
                     else:
-                        print ("{} - COLLISION in Pred".format(self.env.now))
+                        logging.debug("{} - COLLISION in Pred".format(self.env.now))
                     sent_pkt = self.env.process(self.port.send())#sending predicted messages
                     yield sent_pkt # wait grant be used
                     grant_usage = yield self.port.grant_real_usage.get() # get grant real utilisation
@@ -1155,10 +1155,11 @@ class MPD_DBA(DBA):
             predcp = list(predictions)
             j = 1
             #drop: if there are overlaps between the predictions
+            ini = max(self.env.now,self.next_grant)
             bucket_time = (ONU.bucket*8)/float(10000000000)
             for p in predcp[:-1]:
                 for q in predcp[j:]:
-                    if p[1] + NUMBER_OF_ONUs*(ONU.delay+bucket_time)  > q[0]:
+                    if p[1] + (NUMBER_OF_ONUs-1)*(bucket_time)  > q[0]:
                         predictions = None
                         break
 
@@ -1174,7 +1175,7 @@ class MPD_DBA(DBA):
                 if len(self.predictions_array) == 0:
                     self.predictions_array += predictions
                 else:
-                    self.predictions_array = filter(lambda x: x[0] > self.env.now, self.predictions_array)
+                    self.predictions_array = filter(lambda x: x[0] > ini, self.predictions_array)
                     predcp = list(predictions)
                     newpred = []
                     drop = False
@@ -1209,12 +1210,12 @@ class MPD_DBA(DBA):
             time_stamp = self.env.now
             delay = ONU.delay
 
-            if len(ONU.grant_report) > 0:
-                # if predictions where utilized, update history with real grant usage
-                for report in ONU.grant_report:
-                    self.grant_history[ONU.oid]['start'].append(report[0])
-                    self.grant_history[ONU.oid]['end'].append(report[1])
-                    self.grant_history[ONU.oid]['counter'].append( self.grant_history[ONU.oid]['counter'][-1] + 1  )
+            # if len(ONU.grant_report) > 0:
+            #     # if predictions where utilized, update history with real grant usage
+            #     for report in ONU.grant_report:
+            #         self.grant_history[ONU.oid]['start'].append(report[0])
+            #         self.grant_history[ONU.oid]['end'].append(report[1])
+            #         self.grant_history[ONU.oid]['counter'].append( self.grant_history[ONU.oid]['counter'][-1] + 1  )
 
             # check if max grant size is enabled
             if self.max_grant_size > 0 and buffer_size > self.max_grant_size:
@@ -1224,18 +1225,35 @@ class MPD_DBA(DBA):
             grant_time = delay + sending_time # one way delay + transmission time
             ini = max(self.env.now,self.next_grant)
             grant_final_time = ini + grant_time # timestamp for grant end
-
-            # Update grant history with grant requested
-            self.grant_history[ONU.oid]['start'].append(self.env.now)
-            self.grant_history[ONU.oid]['end'].append(grant_final_time)
-            if len(self.grant_history[ONU.oid]['counter']) > 0:
-                self.grant_history[ONU.oid]['counter'].append( self.grant_history[ONU.oid]['counter'][-1] + 1  )
-            else:
-                self.grant_history[ONU.oid]['counter'].append( 1 )
-
             if self.predictions_counter_array[ONU.oid] > 0:
                 self.predictions_counter_array[ONU.oid] -= 1
+                self.grant_history[ONU.oid]['start'].append(ini)
+                self.grant_history[ONU.oid]['end'].append(grant_final_time)
+                if len(self.grant_history[ONU.oid]['counter']) > 0:
+                    self.grant_history[ONU.oid]['counter'].append( self.grant_history[ONU.oid]['counter'][-1] + 1  )
+                else:
+                    self.grant_history[ONU.oid]['counter'].append( 1 )
             else:
+
+                # Update grant history with grant requested
+                if len(self.predictions_array) > 0:
+                    self.predictions_array = filter(lambda x: x[0] > ini, self.predictions_array)
+                    if len(self.predictions_array) > 0:
+                        if (grant_final_time+ONU.delay+self.guard_interval) > self.predictions_array[0][0]:
+                            bits = ONU.bucket * 8
+                            sending_time = 	bits/float(10000000000) #buffer transmission time10g
+                            grant_time = delay + sending_time # one way delay + transmission time
+                            grant_final_time = ini + grant_time # timestamp for grant end
+                self.grant_history[ONU.oid]['start'].append(ini)
+                self.grant_history[ONU.oid]['end'].append(grant_final_time)
+                if len(self.grant_history[ONU.oid]['counter']) > 0:
+                    self.grant_history[ONU.oid]['counter'].append( self.grant_history[ONU.oid]['counter'][-1] + 1  )
+                else:
+                    self.grant_history[ONU.oid]['counter'].append( 1 )
+
+                # if self.predictions_counter_array[ONU.oid] > 0:
+                #     self.predictions_counter_array[ONU.oid] -= 1
+                # else:
                 #PREDICTIONS
                 predictions = self.predictor(ONU) # start predictor process
 
