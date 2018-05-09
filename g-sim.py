@@ -347,7 +347,7 @@ class ONUPort(object):
             self.pkt = pkt
 
         except simpy.Interrupt as i:
-            logging.debug("Error while getting a packet from the buffer ({})".format(i))
+            #logging.debug("Error while getting a packet from the buffer ({})".format(i))
 
             pass
 
@@ -370,7 +370,8 @@ class ONUPort(object):
         pn = 0
 
         #self.current_grant_delay = []
-        #print self.grant_final_time - self.env.now
+        print ("duration onu {}".format(self.ONU.oid))
+        print self.grant_final_time - self.env.now
         while self.grant_final_time  > self.env.now:
 
             get_pkt = self.env.process(self.get_pkt())#trying to get a package in the buffer
@@ -451,8 +452,8 @@ class ONUPort(object):
             #print dd
             #print pt
             #print pn
-            #print self.packets_rec
-            #print self.byte_size
+            print self.packets_rec
+            print self.byte_size
             #print why_break
             yield self.env.timeout(self.ONU.delay) # propagation delay
             self.grant_real_usage.put( [start_grant_usage , start_grant_usage + end_grant_usage] )
@@ -521,9 +522,9 @@ class ONU(object):
             pred_grant_usage_report = [] # grant prediction report list
             # real start and endtime used report to OLT
             try:
-                #print("{} : grant time in onu {} = {}".format(self.env.now,self.oid,grant['grant_final_time'] - self.env.now))
+                print("{} : grant time in onu {} = {}".format(self.env.now,self.oid,grant['grant_final_time'] - self.env.now))
                 next_grant = grant['grant_start_time'] - self.env.now #time until next grant begining
-                #print("next_grant timeout {}".format(next_grant))
+                print("next_grant timeout {}".format(next_grant))
                 yield self.env.timeout(next_grant)  #wait for the next grant
             except Exception as e:
                 pass
@@ -537,13 +538,14 @@ class ONU(object):
 
             sent_pkt = self.env.process(self.port.send()) # send pkts during grant time
             yield sent_pkt # wait grant be used
-            #print ("{} - arrived at OLT onu{}:".format(self.env.now,self.oid))
+            print ("{} - arrived at OLT onu{}:".format(self.env.now,self.oid))
             grant_usage = yield self.port.grant_real_usage.get() # get grant real utilisation
             if len(grant_usage) == 0: #debug
                 logging.debug("Error in grant_usage")
 
             # Prediction stage
             if grant['prediction']:#check if have any predicion in the grant
+                #print "OI"
                 self.port.reset_curret_grant_delay()
                 for pred in grant['prediction']:
                     self.channel.freechannel(self.oid)
@@ -551,7 +553,9 @@ class ONU(object):
                     pred_grant = {'grant_size': grant['grant_size'], 'grant_final_time': pred[1]}
                     #wait next cycle
                     try:
+                        print("{} : grantp time in onu {} = s {} f{}".format(self.env.now,self.oid,pred[0],pred_grant['grant_final_time']))
                         next_grant = pred[0] - self.env.now #time until next grant begining
+                        print("next_grant timeout {}".format(next_grant))
                         yield self.env.timeout(next_grant)  #wait for the next grant
                     except Exception as e:
                         logging.debug("{}: pred {}, gf {}".format(self.env.now,pred,grant['grant_final_time']))
@@ -563,11 +567,13 @@ class ONU(object):
                         self.channel.blockchannel(self.oid)
                     else:
                         logging.debug("{} - COLLISION in Pred".format(self.env.now))
+                        print ("{} - COLLISION in Pred".format(self.env.now))
                     sent_pkt = self.env.process(self.port.send())#sending predicted messages
                     yield sent_pkt # wait grant be used
                     grant_usage = yield self.port.grant_real_usage.get() # get grant real utilisation
                     if len(grant_usage) > 0: # filling grant prediction report list
                         pred_grant_usage_report.append(grant_usage)
+                        print ("{} - arrived at OLT onu{}:".format(self.env.now,self.oid))
                         #logging.debug("{}:pred={},usage={}".format(self.env.now,pred,grant_usage))
                     else:
                         logging.debug("{}:Error in pred_grant_usage".format(self.env.now))
@@ -669,7 +675,7 @@ class IPACT(DBA):
             # write grant log
             grant_time_file.write( "{},{},{},{},{},{},{},{}\n".format(MAC_TABLE['olt'], MAC_TABLE[ONU.oid],"02", time_stamp,counter, ONU.oid,self.env.now,grant_final_time) )
             # construct grant message
-            grant = {'ONU':ONU,'grant_size': buffer_size, 'grant_final_time': grant_final_time, 'prediction': None}
+            grant = {'ONU':ONU,'grant_size': buffer_size, 'grant_start_time': self.env.now, 'grant_final_time': grant_final_time, 'prediction': None}
             self.grant_store.put(grant) # send grant to OLT
             Grant_ONU_counter[ONU.oid] += 1
 
@@ -707,13 +713,12 @@ class MDBA(DBA):
             grant_final_time = ini + grant_time # timestamp for grant end
             counter = Grant_ONU_counter[ONU.oid] # Grant message counter per ONU
             # write grant log
-            #print("grant duration = {}".format(grant_final_time - ini))
             grant_time_file.write( "{},{},{},{},{},{},{},{}\n".format(MAC_TABLE['olt'], MAC_TABLE[ONU.oid],"02", time_stamp,counter, ONU.oid,self.env.now,grant_final_time) )
             # construct grant message
             grant = {'ONU':ONU,'grant_size': buffer_size, 'grant_start_time': ini , 'grant_final_time': grant_final_time, 'prediction': None}
             self.grant_store.put(grant) # send grant to OLT
             Grant_ONU_counter[ONU.oid] += 1
-            #print ("{} - grant onu{}: start={} ,final={}".format(self.env.now,ONU.oid,ini,grant_final_time))
+            print ("{} - grant onu{}: start={} ,final={}".format(self.env.now,ONU.oid,ini,grant_final_time))
 
             # timeout until the end of grant to then get next grant request
             self.next_grant = grant_final_time + delay + self.guard_interval
@@ -916,70 +921,6 @@ class PD_DBA(DBA):
 
         self.model = MultiOutputRegressor(reg)
 
-    def predictions_schedule(self,predictions):
-        predictions = map(list,predictions)
-        predictions_cp = list(predictions)
-        if len(self.predictions_array) > 0:
-            self.predictions_array = filter(lambda x: x[0] > self.env.now, self.predictions_array)
-            # for interval1 in predictions:
-            #     for interval2 in self.predictions_array:
-            #         if interval2[1] > interval1[0]:
-            #             # print predictions
-            #             index = predictions.index(interval1)
-            #             new_interval = [ interval2[1] , interval1[1] ]
-            #             predictions_cp[ index ] = new_interval
-            #         elif interval1[1] > interval2[0]:
-            #             index = predictions.index(interval1)
-            #             new_interval = [ interval1[0] , interval2[0] ]
-            #             predictions_cp[ index ] = new_interval
-            # print predictions_cp
-            # time.sleep(5)
-            # predictions = predictions_cp
-
-
-
-        # print self.predictions_array
-        # print ""
-        predictions_array_cp = list(self.predictions_array)
-        predictions_array_cp +=  predictions
-        predictions_array_cp.sort()
-        #self.predictions_array = sorted(self.predictions_array,key=lambda x: x[0])
-        # print self.predictions_array
-        # print "#########"
-        # time.sleep(5)
-
-        #self.predictions_array.sort()
-        over = False
-        j = 1
-        for interval1 in predictions_array_cp[:-1]:
-            for interval2 in predictions_array_cp[j:]:
-                if interval1[1] > interval2[0]:
-                    overlap_file.write("{}\n".format(interval1[1] - interval2[0]))
-                    over = True
-                    if interval1 in predictions:
-                        #index1 = self.predictions_array.index(interval1)
-                        index = predictions.index(interval1)
-                        new_interval = [ interval1[0] , interval2[0]]
-                        predictions_cp[ index ] = new_interval
-                        #self.predictions_array[index1] = new_interval
-
-                    elif interval2 in predictions:
-                        #index1 = self.predictions_array.index(interval2)
-                        index = predictions.index(interval2)
-                        new_interval = [ interval1[1], interval2[1] ]
-                        predictions_cp[ index ] = new_interval
-                        #self.predictions_array[index1] = new_interval
-                else:
-                    break
-            j+=1
-
-        if over:
-            predictions = None
-        else:
-            predictions = predictions_cp
-            self.predictions_array += predictions
-        return predictions
-
     def drop_overlap(self,predictions,ONU):
         predcp = list(predictions)
         j = 1
@@ -1129,7 +1070,7 @@ class PD_DBA(DBA):
 
             #grant_time_file.write( "{},{},{}\n".format(ONU.oid,self.env.now,grant_final_time) )
             # construct grant message
-            grant = {'ONU':ONU,'grant_size': buffer_size, 'grant_final_time': grant_final_time, 'prediction': predictions}
+            grant = {'ONU':ONU,'grant_size': buffer_size, 'grant_start_time': self.env.now, 'grant_final_time': grant_final_time, 'prediction': predictions}
 
             self.grant_store.put(grant) # send grant to OLT
 
@@ -1179,11 +1120,10 @@ class MPD_DBA(DBA):
             predcp = list(predictions)
             j = 1
             #drop: if there are overlaps between the predictions
-            ini = max(self.env.now,self.next_grant)
             bucket_time = (ONU.bucket*8)/float(10000000000)
             for p in predcp[:-1]:
                 for q in predcp[j:]:
-                    if p[1] + (NUMBER_OF_ONUs-1)*(bucket_time)  > q[0]:
+                    if p[1] + NUMBER_OF_ONUs*(ONU.delay+bucket_time)  > q[0]:
                         predictions = None
                         break
 
@@ -1199,7 +1139,7 @@ class MPD_DBA(DBA):
                 if len(self.predictions_array) == 0:
                     self.predictions_array += predictions
                 else:
-                    self.predictions_array = filter(lambda x: x[0] > ini, self.predictions_array)
+                    self.predictions_array = filter(lambda x: x[0] > self.env.now, self.predictions_array)
                     predcp = list(predictions)
                     newpred = []
                     drop = False
@@ -1220,12 +1160,58 @@ class MPD_DBA(DBA):
                         else:
                             break
                     if len(newpred)> 0:
+                        # print self.predictions_array
+                        # print "KKKK"
+                        # print predictions
+                        # print "KKKK"
+                        # print newpred
+                        # print "######"
                         predictions = newpred
                         self.predictions_array += predictions
-                        self.predictions_array = sorted(self.predictions_array,key=lambda x: x[0])
+                        self.predictions_array = sorted(self.predictions_array,key=lambda x: x[0    ])
                     else:
                         predictions = None
 
+
+
+
+            return predictions
+
+        else:
+            return  None
+
+    def pred2(self, ONU):
+        if len( self.grant_history[ONU.oid]['start'] ) >= self.window :
+            #reduce the grant history to the window size
+            self.grant_history[ONU.oid]['start'] = self.grant_history[ONU.oid]['start'][-self.window:]
+            self.grant_history[ONU.oid]['end'] = self.grant_history[ONU.oid]['end'][-self.window:]
+            self.grant_history[ONU.oid]['counter'] = self.grant_history[ONU.oid]['counter'][-self.window:]
+            next_c = self.grant_history[ONU.oid]['end'][-1] + ONU.delay + self.guard_interval
+            print(" {}: onu {} lastc {} nextc {} nu {}".format(self.env.now, ONU.oid,self.next_grant,next_c,NUMBER_OF_ONUs))
+            predictions = []
+            npkt = ONU.bucket / 1500
+            npkt = (npkt*4)/10
+            bits = (npkt*1500) * 8
+            sending_time = 	bits/float(10000000000)
+
+            for i in range(self.predict):
+                start = next_c + (NUMBER_OF_ONUs -1)*( sending_time + ONU.delay + self.guard_interval)
+                ini = max(start,self.env.now+0.004)
+                if ONU.oid == 1:
+                    ini = ini + 0.00032520882458999915
+                elif ONU.oid == 0:
+                    ini = ini + 0.0006413525411900003
+                end = ini+ sending_time
+                predictions.append([ini,end])
+                next_c = end + ONU.delay + self.guard_interval
+            if len(self.predictions_array) == 0:
+                self.predictions_array += predictions
+            else:
+                self.predictions_array += predictions
+                self.predictions_array = sorted(self.predictions_array,key=lambda x: x[0])
+            return predictions
+        else:
+            return None
 
     def dba(self,ONU,buffer_size):
         with self.counter.request() as my_turn:
@@ -1267,14 +1253,14 @@ class MPD_DBA(DBA):
             else:
 
                 # Update grant history with grant requested
-                if len(self.predictions_array) > 0:
-                    self.predictions_array = filter(lambda x: x[0] > ini, self.predictions_array)
-                    if len(self.predictions_array) > 0:
-                        if (grant_final_time+ONU.delay+self.guard_interval) > self.predictions_array[0][0]:
-                            bits = ONU.bucket * 8
-                            sending_time = 	bits/float(10000000000) #buffer transmission time10g
-                            grant_time = delay + sending_time # one way delay + transmission time
-                            grant_final_time = ini + grant_time # timestamp for grant end
+                # if len(self.predictions_array) > 0:
+                #     self.predictions_array = filter(lambda x: x[0] > ini, self.predictions_array)
+                #     if len(self.predictions_array) > 0:
+                #         if (grant_final_time+ONU.delay+self.guard_interval) > self.predictions_array[0][0]:
+                #             bits = ONU.bucket * 8
+                #             sending_time = 	bits/float(10000000000) #buffer transmission time10g
+                #             grant_time = delay + sending_time # one way delay + transmission time
+                #             grant_final_time = ini + grant_time # timestamp for grant end
                 self.grant_history[ONU.oid]['start'].append(ini)
                 self.grant_history[ONU.oid]['end'].append(grant_final_time)
                 if len(self.grant_history[ONU.oid]['counter']) > 0:
@@ -1286,7 +1272,7 @@ class MPD_DBA(DBA):
                 #     self.predictions_counter_array[ONU.oid] -= 1
                 # else:
                 #PREDICTIONS
-                predictions = self.predictor(ONU) # start predictor process
+                predictions = self.pred2(ONU) # start predictor process
 
                 if predictions is not None:
                     self.predictions_counter_array[ONU.oid] = len(predictions)
@@ -1294,8 +1280,9 @@ class MPD_DBA(DBA):
 
                 #grant_time_file.write( "{},{},{}\n".format(ONU.oid,self.env.now,grant_final_time) )
                 # construct grant message
-                grant = {'ONU':ONU,'grant_size': buffer_size, 'grant_final_time': grant_final_time, 'prediction': predictions}
-
+                grant = {'ONU':ONU,'grant_size': buffer_size,'grant_start_time': ini, 'grant_final_time': grant_final_time, 'prediction': predictions}
+                print ("{} - grant onu{}: start={} ,final={}".format(self.env.now,ONU.oid,ini,grant_final_time))
+                print("grant duration = {}".format(grant_final_time - ini))
                 self.grant_store.put(grant) # send grant to OLT
 
                 # timeout until the end of grant to then get next grant request

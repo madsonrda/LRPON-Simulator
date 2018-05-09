@@ -8,5 +8,5 @@ do
    do
       python g-sim.py mdba -O 3 -b $pkt -d 20 -t 5 -T cbr -s $seed -P $pkt &
    done
-   sleep 220
+   sleep 320
 done

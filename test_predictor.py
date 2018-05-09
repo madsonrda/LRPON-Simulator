@@ -5,92 +5,99 @@ import matplotlib.pyplot as plt
 from sklearn import linear_model
 from sklearn.metrics import r2_score
 from sklearn.metrics import mean_squared_error as mse
+from sklearn.multioutput import MultiOutputRegressor
 import time
+import sys
 
 
-def grant_predictor(onu_id,onu_df,window,predict,features,model,target,metric):
-    index=0
-    index_max = 0
+def grant_predictor(onu_id,onu_df,window,predict,features,model,metric):
+    index=0 # window start
+    index_max = 0 # prediction end
 
+    # list with metrics of each prediction in different observation windows
     metric_list = []
+    reg = MultiOutputRegressor(model)#Implement the model
 
     while index+window < len(onu_df):
-        interval=index+window
+        interval=index+window # window final position
 
-        df_tmp = onu_df.iloc[index:interval]
-        if interval+predict < len(onu_df):
+        df_tmp = onu_df.iloc[index:interval] # training dataset
+        if interval+predict < len(onu_df): # check if prediction doesnt overflow input data
             index_max = interval+predict
         else:
             index_max = len(onu_df)-1
 
-        reg = model
-
-
+        # check if features evaluated is simple(counter) else counter+timestamp
         if len(features) == 1:
             X_pred = np.array(onu_df[features].iloc[interval:index_max]).reshape(-1,1)
             if len(X_pred) == 0:
                 break
-            reg.fit(np.array( df_tmp[features] ).reshape(-1,1) , df_tmp[target])
+            # fitting the model
+            reg.fit(np.array( df_tmp[features] ).reshape(-1,1) , df_tmp[['start','end']])
         else:
             X_pred = onu_df[features].iloc[interval:index_max]
             if len(X_pred) == 0:
                 break
-            reg.fit(df_tmp[features] , df_tmp[target])
+            # fitting the model
+            reg.fit(df_tmp[features] , df_tmp[['start','end']])
 
+        # make prediction
         pred = reg.predict(X_pred)
-        Y_true = onu_df[target].iloc[interval:index_max]
+        # real values to compare with prediction
+        Y_true = onu_df[['start','end']].iloc[interval:index_max]
+        # metric calculation
+        metric_list.append(metric(Y_true, pred,multioutput='uniform_average'))
 
-        metric_list.append(metric(Y_true, pred))
-
+        # shift past observations window in p positions
         index += predict
 
-    return np.mean(metric_list)
+    return metric_list
 
-
-exponents = [1160, 2320, 3480]
-seeds = [20]
-windows = [10,20,30]
-predicts = [5,10,15,20]
-features = [['counter'],['timestamp','counter']]
+#settings
+model = sys.argv[1]
+windows = [3,4,5,8,10,15,20]
+predicts = [3,4,5,8,10,15,20]
+#feature = ['timestamp','counter']
+feature = ['counter']
 models = {'ols': linear_model.LinearRegression(),'ridge': linear_model.Ridge(alpha=.5),'lasso':linear_model.Lasso(alpha=.1)}
 metrics = {'r2': r2_score,'mse': mse}
-targets = ['start','end']
+best_r2 = {'key': "",'r2':float("-inf")}
+best_mse = {'key': "",'mse':float("inf")}
 
+# read dataset file
+data = pd.read_csv("data-grant_time.csv")
+for w in windows:
+    for p in predicts:
+        d = {'r2':None,'mse':None} #auxiliary dict to create several dataframes
+        for metric in metrics:
+            result_list = [] # list of results per metric
+            # Split the processed dataset by ONU
+            for onu in data['ONU_id'].unique():
+                # Create a new pandas DataFrame by ONU with only the columns timestamp, counter, start and end
+                onu_df = data[ data['ONU_id'] == onu ][ ['timestamp','counter','start','end'] ]
+                # call predictor
+                result = grant_predictor(onu,onu_df,w,p,feature,models[model],metrics[metric])
+                result_list += result
+            if metric == 'r2':
+                d['r2'] = result_list
+            else:
+                d['mse'] = result_list
+        # Create a pandas DataFrame containing the metric_list for R2 and MSE
+        df = pd.DataFrame(d)
 
-table = {}
+        # Print the DataFrame descriptive statistics.
+        print('w={},p={}'.format(w,p))
+        print df.describe()
+        print ""
 
-for e in exponents:
-    table[e] = {}
-    for f in features:
-        table[e]["{}".format(f)] = {}
-        for t in targets:
-            table[e]["{}".format(f)][t]= {'r2': {'name':'','max':float("-inf") }, 'mse': {'name':'','min':float("inf") }}
+        # Update the best metrics r2 and mse (int the actual moment)
+        if df['r2'].mean() > best_r2['r2']:
+    		best_r2['key'] = 'w={},p={}'.format(w,p)
+    		best_r2['r2'] = df['r2'].mean()
+    	if df['mse'].mean() < best_mse['mse']:
+    		best_mse['key'] = 'w={},p={}'.format(w,p)
+    		best_mse['mse'] = df['mse'].mean()
 
-
-for exp in exponents:
-    for feature in features:
-        for model in models:
-            for w in windows:
-                for p in predicts:
-                    for target in targets:
-                        for metric in metrics:
-                            result_list = []
-                            for seed in seeds:
-                                data = pd.read_csv("csv/grant_time/ipact-3-27000-0-100-{}-{}-grant_time.csv".format(seed, exp))
-                                for onu in data['ONU_id'].unique():
-                                    onu_df = data[ data['ONU_id'] == onu ][ ['timestamp','counter','start','end'] ]
-                                    result = grant_predictor(onu,onu_df,w,p,feature,models[model],target,metrics[metric])
-                                    result_list.append(result)
-                            mean = np.mean(result_list)
-                            name = "{}:w={},p={}".format(model,w,p)
-                            if metric == 'r2':
-                                if mean > table[exp]["{}".format(feature)][target]['r2']['max']:
-                                    table[exp]["{}".format(feature)][target]['r2']['max'] = mean
-                                    table[exp]["{}".format(feature)][target]['r2']['name'] = name
-                            else:
-                                if mean < table[exp]["{}".format(feature)][target]['mse']['min']:
-                                    table[exp]["{}".format(feature)][target]['mse']['min'] = mean
-                                    table[exp]["{}".format(feature)][target]['mse']['name'] = name
-
-
-print table
+# print the best metrics
+print "best r2 = {}".format(best_r2)
+print "best mse = {}".format(best_mse)
